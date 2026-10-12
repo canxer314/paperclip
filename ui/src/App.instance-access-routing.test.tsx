@@ -7,6 +7,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { queryKeys } from "./lib/queryKeys";
 
 const state = vi.hoisted(() => ({ streamlined: true, admin: true }));
+const getCurrentBoardAccess = vi.hoisted(() => vi.fn());
+vi.mock("./api/access", () => ({ accessApi: { getCurrentBoardAccess } }));
 vi.mock("./components/Layout", () => ({ Layout: () => <div data-shell="default"><Outlet /></div> }));
 vi.mock("./components/Layout.production", () => ({ Layout: () => <div data-shell="production"><Outlet /></div> }));
 vi.mock("./pages/PluginPage", () => ({ PluginPage: () => <div>OTHER_PAGE</div> }));
@@ -20,7 +22,6 @@ vi.mock("./context/CompanyContext", () => ({
   CompanyProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
 }));
 vi.mock("./context/DialogContext", () => ({ useDialogActions: () => ({ openOnboarding: vi.fn() }), useDialogState: () => ({ onboardingOpen: false, onboardingRouteDismissed: true }) }));
-vi.mock("./hooks/useInstanceAdminAccess", () => ({ useInstanceAdminAccess: () => state.admin }));
 vi.mock("./pages/NotFound", () => ({ NotFoundPage: () => <div>NOT_FOUND</div> }));
 vi.mock("./hooks/useCloudInstance", () => ({ useCloudInstance: () => null }));
 vi.mock("./hooks/useCombinedInboxTasksEnabled", () => ({ useCombinedInboxTasksEnabled: () => ({ enabled: false }) }));
@@ -39,13 +40,32 @@ describe("company-independent instance access navigation", () => {
     root = createRoot(container);
     client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     state.admin = true;
+    getCurrentBoardAccess.mockReset();
+    getCurrentBoardAccess.mockImplementation(async () => ({ isInstanceAdmin: state.admin, source: "session", memberships: [], companyIds: [] }));
     state.streamlined = true;
     client.setQueryData(queryKeys.health, { deploymentMode: "local_trusted", hiddenSettings: [] });
   });
   afterEach(async () => { await act(async () => root.unmount()); client.clear(); container.remove(); });
   async function render(path: string) {
     await act(async () => root.render(<QueryClientProvider client={client}><MemoryRouter initialEntries={[path]}><App /><Location /></MemoryRouter></QueryClientProvider>));
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
   }
+  it("shows an access-check error without onboarding and retries to the admin start page", async () => {
+    getCurrentBoardAccess.mockRejectedValueOnce(new Error("Private diagnostic"));
+    await render("/");
+    expect(container.textContent).toContain("Unable to check instance access.");
+    expect(container.textContent).not.toContain("Private diagnostic");
+    expect(container.querySelector("output")?.textContent).toBe("/");
+    const retry = [...container.querySelectorAll("button")].find((button) => button.textContent === "Try again");
+    expect(retry).toBeDefined();
+    await act(async () => retry!.click());
+    await vi.waitFor(async () => {
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+      expect(container.querySelector('a[href="/instance/access"]')).not.toBeNull();
+    });
+    expect(getCurrentBoardAccess).toHaveBeenCalledTimes(2);
+    expect(container.querySelector("output")?.textContent).toBe("/");
+  });
   it("retains onboarding for a non-admin with no companies", async () => {
     state.admin = false;
     await render("/");

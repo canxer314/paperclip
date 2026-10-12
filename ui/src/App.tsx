@@ -685,7 +685,7 @@ export function OnboardingRoutePage() {
 }
 
 function CompanyRootRedirect() {
-  const canManageInstance = useInstanceAdminAccess();
+  const instanceAccess = useInstanceAdminAccess();
   const { companies, selectedCompany, loading } = useCompany();
 
   if (loading) {
@@ -694,8 +694,18 @@ function CompanyRootRedirect() {
 
   const targetCompany = selectedCompany ?? companies[0] ?? null;
   if (!targetCompany) {
-    if (canManageInstance === undefined) return <PaperclipLoading />;
-    if (!canManageInstance) return <Navigate to="/onboarding" replace />;
+    if (instanceAccess.loading) return <PaperclipLoading />;
+    if (instanceAccess.error) {
+      return (
+        <div className="mx-auto max-w-xl space-y-3 py-10">
+          <p role="alert" className="text-sm text-destructive">Unable to check instance access. Try again before continuing.</p>
+          <Button onClick={() => void instanceAccess.retry()} disabled={instanceAccess.retrying}>
+            {instanceAccess.retrying ? "Retrying…" : "Try again"}
+          </Button>
+        </div>
+      );
+    }
+    if (!instanceAccess.canManageInstance) return <Navigate to="/onboarding" replace />;
     return <NoCompaniesStartPage />;
   }
 
@@ -753,7 +763,7 @@ function UnprefixedBoardRedirect() {
 }
 
 function NoCompaniesStartPage() {
-  const canManageInstance = useInstanceAdminAccess();
+  const { canManageInstance } = useInstanceAdminAccess();
   const { hidden, loaded } = useHiddenSettings();
   const { openOnboarding } = useDialogActions();
   const { t } = useTranslation();

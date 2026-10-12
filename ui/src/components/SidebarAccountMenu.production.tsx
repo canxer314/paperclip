@@ -122,7 +122,7 @@ export function SidebarAccountMenu({
   open: controlledOpen,
   onOpenChange,
 }: SidebarAccountMenuProps) {
-  const canManageInstance = useInstanceAdminAccess();
+  const { canManageInstance } = useInstanceAdminAccess();
   const cloud = useCloudInstance();
   const isCloud = Boolean(cloud);
   // Invites live on the Members page (or in Cloud's People settings). Hide the
