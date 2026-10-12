@@ -172,7 +172,7 @@ describe("CompanySettingsSidebar", () => {
     expect(container.textContent).toContain("Import");
     expect(container.textContent).toContain("Members");
     expect(container.textContent).toContain("Secrets");
-    expect(container.textContent).toContain("Access");
+    expect(container.textContent).not.toContain("Access");
     expect(container.textContent).not.toContain("Tools & Access");
     expect(sidebarNavItemMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -207,12 +207,8 @@ describe("CompanySettingsSidebar", () => {
         end: true,
       }),
     );
-    expect(sidebarNavItemMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        to: "/company/settings/instance/access",
-        label: "Access",
-        end: true,
-      }),
+    expect(sidebarNavItemMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({ label: "Access" }),
     );
     expect(sidebarNavItemMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -417,14 +413,14 @@ describe("CompanySettingsSidebar operator-hidden entries", () => {
     expect(container.textContent).not.toContain("Plugins");
     expect(container.textContent).toContain("General");
     expect(container.textContent).toContain("Adapters");
-    expect(container.textContent).toContain("Access");
+    expect(container.textContent).not.toContain("Access");
     expect(mockPluginsApi.list).not.toHaveBeenCalled();
   });
 
   it("keeps every entry when nothing is hidden", async () => {
     await renderSidebar();
 
-    expect(container.textContent).toContain("Access");
+    expect(container.textContent).not.toContain("Access");
     expect(container.textContent).toContain("Plugins");
     expect(container.textContent).toContain("Adapters");
     expect(container.textContent).toContain("Import");

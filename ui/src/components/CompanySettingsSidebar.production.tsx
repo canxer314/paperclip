@@ -10,7 +10,6 @@ import {
   MailPlus,
   MonitorCog,
   Puzzle,
-  Shield,
   SlidersHorizontal,
   Upload,
   UserRoundPen,
@@ -148,14 +147,6 @@ export function CompanySettingsSidebar() {
           )}
           {fastResponsesEnabled && (
             <SidebarNavItem to="/company/settings/connections" label="Connections" icon={Link2} end />
-          )}
-          {showPage("instance.access") && (
-            <SidebarNavItem
-              to={`${INSTANCE_SETTINGS_PATH_PREFIX}/access`}
-              label="Access"
-              icon={Shield}
-              end
-            />
           )}
           {showPage("instance.heartbeats") && (
             <SidebarNavItem

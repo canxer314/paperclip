@@ -265,6 +265,7 @@ export function Layout() {
   }, [forceRailCollapsed, setForceCollapsed]);
 
   useEffect(() => {
+    if (/^\/instance\/access\/?$/i.test(location.pathname)) return;
     if (companiesLoading || onboardingTriggered.current) return;
     if (health?.deploymentMode === "authenticated") return;
     // Cloud provisions the single company for a stack, and POST /companies is a
@@ -280,6 +281,7 @@ export function Layout() {
     openOnboarding,
     health?.cloud,
     health?.deploymentMode,
+    location.pathname,
   ]);
 
   useEffect(() => {

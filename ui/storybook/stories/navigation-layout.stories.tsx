@@ -1,4 +1,7 @@
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useState, type ReactNode } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { queryKeys } from "@/lib/queryKeys";
+import { SidebarAccountMenu as ProductionSidebarAccountMenu } from "@/components/SidebarAccountMenu.production";
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import {
   Bot,
@@ -386,4 +389,32 @@ function SidebarIconAlignmentHarness() {
 
 export const SidebarIconAlignment: Story = {
   render: () => <SidebarIconAlignmentHarness />,
+};
+
+
+function InstanceAdminMenus() {
+  const client = useQueryClient();
+  const [ready, setReady] = useState(false);
+  useLayoutEffect(() => {
+    client.setQueryData(queryKeys.access.currentBoardAccess, {
+      source: "session", isInstanceAdmin: true, companyIds: [], memberships: [],
+    });
+    client.setQueryData(queryKeys.health, { status: "ok", deploymentMode: "authenticated", hiddenSettings: [] });
+    setReady(true);
+  }, [client]);
+  if (!ready) return null;
+  return (
+    <div className="paperclip-story grid gap-5 md:grid-cols-2">
+      <Section eyebrow="Instance administration" title="Default account menu">
+        <SidebarAccountMenu deploymentMode="authenticated" open onOpenChange={() => undefined} />
+      </Section>
+      <Section eyebrow="Instance administration" title="Production account menu">
+        <ProductionSidebarAccountMenu deploymentMode="authenticated" open onOpenChange={() => undefined} />
+      </Section>
+    </div>
+  );
+}
+
+export const CompanylessInstanceAdminMenus: Story = {
+  render: () => <InstanceAdminMenus />,
 };

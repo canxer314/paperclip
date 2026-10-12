@@ -5,6 +5,14 @@ import { flushSync } from "react-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Layout } from "./Layout";
+import { Layout as ProductionLayout } from "./Layout.production";
+
+vi.mock("./Sidebar.production", async () => await import("./Sidebar"));
+vi.mock("./CompanySettingsSidebar.production", async () => await import("./CompanySettingsSidebar"));
+vi.mock("./AppsSidebar.production", async () => await import("./AppsSidebar"));
+vi.mock("./AppConnectionSidebar.production", async () => await import("./AppConnectionSidebar"));
+vi.mock("./BreadcrumbBar.production", async () => await import("./BreadcrumbBar"));
+vi.mock("./SidebarAccountMenu.production", async () => await import("./SidebarAccountMenu"));
 
 const mockHealthApi = vi.hoisted(() => ({
   get: vi.fn(),
@@ -15,6 +23,7 @@ const mockInstanceSettingsApi = vi.hoisted(() => ({
   getExperimental: vi.fn(),
 }));
 
+const mockOpenOnboarding = vi.hoisted(() => vi.fn());
 const mockNavigate = vi.hoisted(() => vi.fn());
 const mockSetSelectedCompanyId = vi.hoisted(() => vi.fn());
 const mockSetSidebarOpen = vi.hoisted(() => vi.fn());
@@ -208,11 +217,11 @@ vi.mock("../plugins/slots", async () => {
 vi.mock("../context/DialogContext", () => ({
   useDialog: () => ({
     openNewIssue: vi.fn(),
-    openOnboarding: vi.fn(),
+    openOnboarding: mockOpenOnboarding,
   }),
   useDialogActions: () => ({
     openNewIssue: vi.fn(),
-    openOnboarding: vi.fn(),
+    openOnboarding: mockOpenOnboarding,
   }),
 }));
 
@@ -337,6 +346,21 @@ describe("Layout", () => {
     container.remove();
     document.body.innerHTML = "";
     vi.clearAllMocks();
+  });
+
+  it.each([[Layout, "/instance/access"], [ProductionLayout, "/instance/access"], [Layout, "/INSTANCE/access/"], [ProductionLayout, "/instance/access/"]] as const)("does not open onboarding or company settings on the companyless instance route (%#)", async (Shell, pathname) => {
+    currentPathname = pathname;
+    mockCompanyState.companies = [];
+    mockHealthApi.get.mockResolvedValue({ status: "ok", deploymentMode: "local_trusted" });
+    const root = createRoot(container);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    await act(async () => root.render(<QueryClientProvider client={client}><Shell /></QueryClientProvider>));
+    await flushReact();
+    await flushReact();
+    expect(mockOpenOnboarding).not.toHaveBeenCalled();
+    expect(container.textContent).not.toContain("Company settings sidebar");
+    await act(async () => root.unmount());
+    client.clear();
   });
 
   it("does not render the deployment explainer in the shared layout", async () => {

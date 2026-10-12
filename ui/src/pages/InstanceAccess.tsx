@@ -21,11 +21,7 @@ export function InstanceAccess() {
   const [selectedCompanyIds, setSelectedCompanyIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
-    setBreadcrumbs([
-      { label: "Settings", href: "/company/settings" },
-      { label: "Instance settings", href: "/company/settings/instance/general" },
-      { label: "Access" },
-    ]);
+    setBreadcrumbs([{ label: "Instance Access" }]);
   }, [setBreadcrumbs]);
 
   const usersQuery = useQuery({
@@ -203,6 +199,9 @@ export function InstanceAccess() {
                     Toggle organization membership for this user. New access defaults to an active operator membership.
                   </p>
                 </div>
+                {companies.length === 0 && (
+                  <p className="text-sm text-muted-foreground">No organizations yet. Create an organization before assigning membership.</p>
+                )}
                 <div className="grid gap-3 md:grid-cols-2">
                   {companies.map((company) => (
                     <label
