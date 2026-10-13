@@ -24,12 +24,35 @@ type SupertestTestConstructor = {
 // Keep the original home available only for read-only host port-lease checks.
 process.env.PAPERCLIP_TEST_HOST_HOME ??= process.env.PAPERCLIP_HOME?.trim() || path.join(os.homedir(), ".paperclip");
 
+// Isolated forks do not isolate inherited filesystem paths. Give every file
+// its own canonical, compact root even when several files share a Vitest run.
 // Receipt-spool recovery must never scan a developer's instance during tests.
-const paperclipTestHome = fs.mkdtempSync(path.join(os.tmpdir(), "paperclip-vitest-home-"));
+const tempRootParent = process.platform === "win32" ? os.tmpdir() : "/tmp";
+const paperclipTestRoot = fs.realpathSync(fs.mkdtempSync(path.join(tempRootParent, "pv-f-")));
+const paperclipTestHome = path.join(paperclipTestRoot, "h");
+const paperclipTestTmp = path.join(paperclipTestRoot, "t");
+fs.mkdirSync(paperclipTestHome);
+fs.mkdirSync(paperclipTestTmp);
 process.env.PAPERCLIP_HOME = paperclipTestHome;
+process.env.PAPERCLIP_CONFIG = path.join(paperclipTestHome, "config.json");
+process.env.PAPERCLIP_INSTANCE_ID = `vt-${process.pid}-${path.basename(paperclipTestRoot)}`;
+process.env.TMPDIR = paperclipTestTmp;
 // Setup-file afterAll hooks run before suites drain asynchronous heartbeats.
-// Cleanup at worker exit, after all suite teardown, avoids deleting live state.
-process.once("exit", () => fs.rmSync(paperclipTestHome, { recursive: true, force: true, maxRetries: 8, retryDelay: 50 }));
+// Cleanup only after suite teardown, whether the worker exits normally or Vitest
+// terminates its fork with SIGTERM. Keep cleanup scoped to this allocated root.
+let paperclipTestRootCleaned = false;
+function cleanupPaperclipTestRoot() {
+  if (paperclipTestRootCleaned) return;
+  paperclipTestRootCleaned = true;
+  fs.rmSync(paperclipTestRoot, { recursive: true, force: true, maxRetries: 8, retryDelay: 50 });
+}
+process.once("exit", cleanupPaperclipTestRoot);
+function cleanupOnSigterm() {
+  cleanupPaperclipTestRoot();
+  process.off("SIGTERM", cleanupOnSigterm);
+  process.kill(process.pid, "SIGTERM");
+}
+process.once("SIGTERM", cleanupOnSigterm);
 
 const require = createRequire(import.meta.url);
 const SupertestTest = require("supertest/lib/test.js") as SupertestTestConstructor;
