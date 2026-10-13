@@ -162,7 +162,8 @@ Default local/agent test path:
 pnpm test
 ```
 
-This is the cheap default and only runs the Vitest suite. Browser suites stay opt-in:
+`pnpm test` runs the complete Vitest suite, including database-backed integration
+tests; it is not a fast unit-test command. Browser suites stay opt-in:
 
 ```sh
 pnpm test:e2e
@@ -173,7 +174,21 @@ Run the browser suites only when your change touches them or when you are explic
 
 For normal issue work, run the smallest relevant verification first. Do not default to repo-wide typecheck/build/test on every heartbeat when a narrower check is enough to prove the change.
 
-Run this full check before claiming repo work done in a PR-ready hand-off, or when the change scope is broad enough that targeted checks are not sufficient:
+This fork (`canxer314/paperclip`) is maintained for local, personal use. Before
+merge, verify the exact PR revision in a clean worktree with no unrelated source
+changes. Install from the lockfile and record the revision, commands, outcomes,
+and skipped checks in the PR.
+
+For small changes, run relevant tests and affected-package typechecks. Add build
+checks when compiled output changes. Documentation-only changes need document
+and diff checks, not the full executable suite. Complete an independent code
+review and resolve confirmed findings.
+
+For database migrations, authorization changes, test infrastructure changes,
+broad refactors, or changes with uncertain impact, run the full checks below.
+Start with targeted checks. Long suites may run in documented, non-overlapping
+segments that cover the full configured suite; report segment results rather
+than claiming `pnpm test:run` passed when that command did not finish.
 
 ```sh
 pnpm -r typecheck
@@ -181,7 +196,15 @@ pnpm test:run
 pnpm build
 ```
 
-If anything cannot be run, explicitly report what was not run and why.
+Report failed, interrupted, and skipped checks with their reasons. A missing
+required local result remains a merge gap; waiving CI does not waive local
+verification. The user must explicitly accept any remaining required-check gap
+before merge.
+
+GitHub CI and Greptile are optional for this fork, not merge prerequisites.
+If used, record their actual results and resolve confirmed findings. When
+submitting to `paperclipai/paperclip`, follow its current contribution, CI, and
+review requirements instead. Publishing upstream requires explicit user approval.
 
 ## 8. API and Auth Expectations
 
@@ -213,17 +236,18 @@ When creating a pull request (via `gh pr create` or any other method), you **mus
 - **Verification** — how a reviewer can confirm it works
 - **Risks** — what could go wrong
 - **Model Used** — the AI model that produced or assisted with the change (provider, exact model ID, context window, capabilities). Write "None — human-authored" if no AI was used.
-- **Checklist** — all items checked
+- **Checklist** — applicable items checked; explain non-applicable items and leave unmet requirements unchecked
 
 ## 11. Definition of Done
 
 A change is done when all are true:
 
 1. Behavior matches `doc/SPEC-implementation.md`
-2. Typecheck, tests, and build pass
+2. Required local verification under section 7 passes in a clean worktree, or the user explicitly accepts documented gaps
 3. Contracts are synced across db/shared/server/ui
 4. Docs updated when behavior or commands change
 5. PR description follows the [PR template](.github/PULL_REQUEST_TEMPLATE.md) with all sections filled in (including Model Used)
+6. Independent code review is complete and confirmed findings are resolved; any remaining risk is explicitly accepted
 
 ## Design system
 
