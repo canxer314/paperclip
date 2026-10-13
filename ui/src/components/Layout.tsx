@@ -271,6 +271,7 @@ export function Layout({ sidebarSections }: { sidebarSections?: ReactNode }) {
   }, [companyPrefix, contextualSurface, location.pathname]);
 
   useEffect(() => {
+    if (/^\/instance\/access\/?$/i.test(location.pathname)) return;
     if (companiesLoading || onboardingTriggered.current) return;
     if (health?.deploymentMode === "authenticated") return;
     // Cloud provisions the single company for a stack, and POST /companies is a
@@ -280,7 +281,7 @@ export function Layout({ sidebarSections }: { sidebarSections?: ReactNode }) {
       onboardingTriggered.current = true;
       openOnboarding();
     }
-  }, [companies, companiesLoading, openOnboarding, health?.cloud, health?.deploymentMode]);
+  }, [companies, companiesLoading, openOnboarding, health?.cloud, health?.deploymentMode, location.pathname]);
 
   useEffect(() => {
     if (!companyPrefix || companiesLoading || companies.length === 0) return;

@@ -155,6 +155,35 @@ describe("SidebarAccountMenu", () => {
     vi.unstubAllGlobals();
   });
 
+  describe.each([SidebarAccountMenu, ProductionSidebarAccountMenu])("instance access (%#)", (AccountMenu) => {
+    it("hides access when a refresh fails even with a cached administrator snapshot", async () => {
+      const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      queryClient.setQueryData(queryKeys.health, { hiddenSettings: [] });
+      queryClient.setQueryData(queryKeys.access.currentBoardAccess, boardAccess("viewer", { isInstanceAdmin: true }));
+      mockGetCurrentBoardAccess.mockRejectedValue(new Error("Unavailable"));
+      await queryClient.fetchQuery({ queryKey: queryKeys.access.currentBoardAccess, queryFn: mockGetCurrentBoardAccess, staleTime: 0 }).catch(() => undefined);
+      const root = createRoot(container);
+      await act(async () => root.render(<QueryClientProvider client={queryClient}><TooltipProvider><AccountMenu open /></TooltipProvider></QueryClientProvider>));
+      await flushReact();
+      expect(document.body.querySelector('a[href="/instance/access"]')).toBeNull();
+      await act(async () => root.unmount());
+      queryClient.clear();
+    });
+
+    it.each([[true, false, true], [true, true, false], [false, false, false]])("admin=%s hidden=%s discoverable=%s", async (admin, hidden, visible) => {
+      mockGetCurrentBoardAccess.mockResolvedValue({ ...boardAccess("viewer", { isInstanceAdmin: admin }), companyIds: [], memberships: [] });
+      const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      queryClient.setQueryData(queryKeys.health, { hiddenSettings: hidden ? ["instance.access"] : [] });
+      const root = createRoot(container);
+      await act(async () => root.render(<QueryClientProvider client={queryClient}><TooltipProvider><AccountMenu open /></TooltipProvider></QueryClientProvider>));
+      await flushReact();
+      await flushReact();
+      expect(Boolean(document.body.querySelector('a[href="/instance/access"]'))).toBe(visible);
+      await act(async () => root.unmount());
+      queryClient.clear();
+    });
+  });
+
   describe.each([SidebarAccountMenu, ProductionSidebarAccountMenu])("staging commit (%#)", (AccountMenu) => {
     const commit = "8751e2de4626ff5e7355fe28b30509991cfff920";
 

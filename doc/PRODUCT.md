@@ -250,3 +250,18 @@ and sticky headers help operators scan exports. Rendered and raw view icons
 remain next to download; raw view preserves the original source. The table
 shows up to 500 data rows and 100 columns, with a notice when the preview is
 limited. Download retains the complete file.
+
+## Instance access administration
+
+Instance administrators open **Instance Access** from the account menu in either UI,
+or from the start page when no organizations are available. The page lives at
+`/instance/access`, independently of the selected organization, and does not open
+organization onboarding or the organization settings sidebar. An empty organization
+directory is shown explicitly; existing user membership and instance-admin editing
+remain on the same page.
+
+Legacy Access bookmarks (`/company/settings/instance/access`, `/instance/settings/access`,
+and `/settings/access`, including organization-prefixed variants) redirect to the
+same page. The operator's `instance.access` hiding policy applies to every entry;
+hiding a page is not authorization. Instance administration endpoints continue to
+require instance-admin authority. Other instance settings remain in their existing locations.

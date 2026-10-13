@@ -104,6 +104,16 @@ describe("InstanceAccess company directory", () => {
     });
   });
 
+  it("shows an organization empty state without blocking instance user administration", async () => {
+    mocks.list.mockResolvedValue([]);
+    mocks.directory.mockResolvedValue([]);
+    mocks.getUserCompanyAccess.mockResolvedValue({ user, companyAccess: [] });
+    await renderPage();
+    await eventually(() => expect(container.textContent).toContain("No organizations yet."));
+    expect(button("Remove instance admin")).toBeDefined();
+    expect(mocks.setBreadcrumbs).toHaveBeenCalledWith([{ label: "Instance Access" }]);
+  });
+
   it("prevents editing an incomplete directory and lets the admin retry", async () => {
     mocks.directory.mockRejectedValue(new Error("Unavailable"));
     await renderPage();
@@ -118,10 +128,13 @@ describe("InstanceAccess company directory", () => {
     await eventually(() => expect(button("Save organization access")).toBeDefined());
   });
 
-  it("does not request the directory when instance administration is forbidden", async () => {
+  it("shows the server denial without fetching the directory or allowing edits for a non-admin", async () => {
     mocks.searchAdminUsers.mockRejectedValue(new ApiError("Forbidden", 403, {}));
     await renderPage();
     await eventually(() => expect(container.textContent).toContain("Instance admin access is required"));
     expect(mocks.directory).not.toHaveBeenCalled();
+    expect(button("Save organization access")).toBeUndefined();
+    expect(button("Promote to instance admin")).toBeUndefined();
+    expect(mocks.setUserCompanyAccess).not.toHaveBeenCalled();
   });
 });

@@ -1,6 +1,7 @@
 import { lazy, Suspense, type ReactNode } from "react";
 import type { ToolConnectionCredentialSource } from "@paperclipai/shared";
-import { Navigate, Outlet, Route, Routes, useActiveCompanyPrefix, useLocation, useParams } from "@/lib/router";
+import { Link, Navigate, Outlet, Route, Routes, useActiveCompanyPrefix, useLocation, useParams } from "@/lib/router";
+import { useInstanceAdminAccess } from "./hooks/useInstanceAdminAccess";
 import { Button } from "@/components/ui/button";
 import { useTranslation } from "@/i18n";
 import { Layout } from "./components/Layout";
@@ -253,8 +254,8 @@ function boardRoutes(streamlinedUiEnabled: boolean, combinedInboxTasksEnabled: b
         <Route path="company/settings/instance/environments/new" element={<CompanyEnvironments mode="create" />} />
         <Route path="company/settings/instance/environments/:environmentId/edit" element={<CompanyEnvironments mode="edit" />} />
       </Route>
-      <Route element={<HiddenSettingsPageGate pageKey="instance.access" />}>
-        <Route path="company/settings/instance/access" element={<InstanceAccess />} />
+      <Route element={<HiddenSettingsPageGate pageKey="instance.access" redirectTo="/" />}>
+        <Route path="company/settings/instance/access" element={<InstanceAccessLegacyRedirect />} />
       </Route>
       <Route element={<HiddenSettingsPageGate pageKey="instance.experimental" />}>
         <Route path="company/settings/instance/experimental" element={<InstanceExperimentalSettings />} />
@@ -537,6 +538,11 @@ function LegacySkillStudioRedirect() {
   );
 }
 
+function InstanceAccessLegacyRedirect() {
+  const { search, hash } = useLocation();
+  return <Navigate to={`/instance/access${search}${hash}`} replace />;
+}
+
 function LegacySettingsRedirect() {
   const location = useLocation();
   const { companies, selectedCompany, loading } = useCompany();
@@ -679,8 +685,8 @@ export function OnboardingRoutePage() {
 }
 
 function CompanyRootRedirect() {
+  const instanceAccess = useInstanceAdminAccess();
   const { companies, selectedCompany, loading } = useCompany();
-  const location = useLocation();
 
   if (loading) {
     return <PaperclipLoading />;
@@ -688,14 +694,18 @@ function CompanyRootRedirect() {
 
   const targetCompany = selectedCompany ?? companies[0] ?? null;
   if (!targetCompany) {
-    if (
-      shouldRedirectCompanylessRouteToOnboarding({
-        pathname: location.pathname,
-        hasCompanies: false,
-      })
-    ) {
-      return <Navigate to="/onboarding" replace />;
+    if (instanceAccess.loading) return <PaperclipLoading />;
+    if (instanceAccess.error) {
+      return (
+        <div className="mx-auto max-w-xl space-y-3 py-10">
+          <p role="alert" className="text-sm text-destructive">Unable to check instance access. Try again before continuing.</p>
+          <Button onClick={() => void instanceAccess.retry()} disabled={instanceAccess.retrying}>
+            {instanceAccess.retrying ? "Retrying…" : "Try again"}
+          </Button>
+        </div>
+      );
     }
+    if (!instanceAccess.canManageInstance) return <Navigate to="/onboarding" replace />;
     return <NoCompaniesStartPage />;
   }
 
@@ -753,6 +763,8 @@ function UnprefixedBoardRedirect() {
 }
 
 function NoCompaniesStartPage() {
+  const { canManageInstance } = useInstanceAdminAccess();
+  const { hidden, loaded } = useHiddenSettings();
   const { openOnboarding } = useDialogActions();
   const { t } = useTranslation();
   // A managed stack with no visible companies is a loading or error state, not
@@ -769,7 +781,7 @@ function NoCompaniesStartPage() {
         <p className="mt-2 text-sm text-muted-foreground">
           {t("app.noCompanies.description", { defaultValue: "Get started by creating an organization." })}
         </p>
-        <div className="mt-4">
+        <div className="mt-4 flex flex-wrap items-center gap-3">
           {/* Same as the onboarding route: no Cloud origin means nowhere to
               send the click, and in-app creation is a 403 floor here. */}
           {cloudInstance && !createStackUrl ? (
@@ -789,6 +801,9 @@ function NoCompaniesStartPage() {
             >
               {t("app.noCompanies.newCompany", { defaultValue: "New Organization" })}
             </Button>
+          )}
+          {canManageInstance && loaded && !hidden.has("instance.access") && (
+            <Button variant="outline" asChild><Link to="/instance/access">Instance Access</Link></Button>
           )}
         </div>
       </div>
@@ -825,6 +840,17 @@ export function App() {
         <Route element={streamlinedUiLoaded ? <CloudAccessGate /> : <PaperclipLoading />}>
           <Route index element={<CompanyRootRedirect />} />
           <Route path="onboarding" element={<OnboardingRoutePage />} />
+          <Route element={streamlinedUiEnabled ? <Layout /> : <ProductionLayout />}>
+            <Route element={<HiddenSettingsPageGate pageKey="instance.access" redirectTo="/" />}>
+              <Route path="instance/access" element={<InstanceAccess />} />
+            </Route>
+          </Route>
+          <Route path="company/settings/instance/access" element={<InstanceAccessLegacyRedirect />} />
+          <Route path=":companyPrefix/company/settings/instance/access" element={<InstanceAccessLegacyRedirect />} />
+          <Route path="instance/settings/access" element={<InstanceAccessLegacyRedirect />} />
+          <Route path="settings/access" element={<InstanceAccessLegacyRedirect />} />
+          <Route path=":companyPrefix/settings/access" element={<InstanceAccessLegacyRedirect />} />
+          <Route path=":companyPrefix/instance/settings/access" element={<InstanceAccessLegacyRedirect />} />
           <Route path="instance" element={<LegacySettingsRedirect />} />
           <Route path="instance/settings" element={<LegacySettingsRedirect />} />
           <Route path="instance/settings/*" element={<LegacySettingsRedirect />} />

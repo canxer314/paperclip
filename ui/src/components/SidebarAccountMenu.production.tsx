@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   BookOpen,
+  Shield,
   Flag,
   LogOut,
   type LucideIcon,
@@ -14,6 +15,7 @@ import { queryKeys } from "@/lib/queryKeys";
 import { useCloudInstance } from "@/hooks/useCloudInstance";
 import { useCloudInviteUrl } from "@/hooks/useCloudInviteUrl";
 import { useCanInviteCompanyMembers } from "@/hooks/useCompanyInviteAccess";
+import { useInstanceAdminAccess } from "@/hooks/useInstanceAdminAccess";
 import { useHiddenSettings } from "@/hooks/useHiddenSettings";
 import { useSignOut } from "@/hooks/useSignOut";
 import { useStagingCommit } from "@/hooks/useStagingCommit";
@@ -120,6 +122,7 @@ export function SidebarAccountMenu({
   open: controlledOpen,
   onOpenChange,
 }: SidebarAccountMenuProps) {
+  const { canManageInstance } = useInstanceAdminAccess();
   const cloud = useCloudInstance();
   const isCloud = Boolean(cloud);
   // Invites live on the Members page (or in Cloud's People settings). Hide the
@@ -230,6 +233,15 @@ export function SidebarAccountMenu({
             </div>
 
             <div className="mt-4 space-y-1">
+              {canManageInstance && hiddenSettingsLoaded && !hiddenSettings.has("instance.access") ? (
+                <MenuAction
+                  label="Instance Access"
+                  description="Manage instance users and organization access."
+                  icon={Shield}
+                  href="/instance/access"
+                  onClick={closeNavigationChrome}
+                />
+              ) : null}
               {showInvite && inviteHref ? (
                 <MenuAction
                   label="Invite"

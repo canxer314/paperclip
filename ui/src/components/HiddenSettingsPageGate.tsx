@@ -8,10 +8,10 @@ import { useHiddenSettings } from "@/hooks/useHiddenSettings";
  * nothing renders, so a hidden page never flashes. Under CloudAccessGate the
  * health response is always cached before board routes mount.
  */
-export function HiddenSettingsPageGate({ pageKey }: { pageKey: string }) {
+export function HiddenSettingsPageGate({ pageKey, redirectTo = "/company/settings" }: { pageKey: string; redirectTo?: string }) {
   const { hidden, loaded } = useHiddenSettings();
 
   if (!loaded) return null;
-  if (hidden.has(pageKey)) return <Navigate to="/company/settings" replace />;
+  if (hidden.has(pageKey)) return <Navigate to={redirectTo} replace />;
   return <Outlet />;
 }
