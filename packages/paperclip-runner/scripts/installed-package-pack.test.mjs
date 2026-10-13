@@ -15,6 +15,40 @@ async function fixture(t, extra = {}) {
   return { root, source };
 }
 
+function normalizePackMetadata(metadata) {
+  const rows = Array.isArray(metadata)
+    ? metadata
+    : metadata && typeof metadata === "object"
+      ? Object.values(metadata)
+      : [];
+  assert.equal(rows.length, 1);
+  const [row] = rows;
+  assert.ok(row && typeof row === "object" && typeof row.filename === "string" && Array.isArray(row.files));
+  return row;
+}
+
+test("normalizes legacy array and npm 12 keyed-object pack metadata", () => {
+  for (const [metadata, filename] of [
+    [[{ filename: "legacy.tgz", files: [] }], "legacy.tgz"],
+    [{ "@paperclipai/runner": { filename: "npm12.tgz", files: [] } }, "npm12.tgz"],
+  ]) {
+    assert.equal(normalizePackMetadata(metadata).filename, filename);
+  }
+});
+
+test("rejects invalid npm pack metadata rows", () => {
+  for (const metadata of [null, {}, [], { package: {} }, [{ files: [] }], "invalid"]) {
+    assert.throws(() => normalizePackMetadata(metadata));
+  }
+});
+
+test("rejects multiple npm pack metadata rows", () => {
+  const row = { filename: "fixture.tgz", files: [] };
+  for (const metadata of [[row, row], { first: row, second: row }]) {
+    assert.throws(() => normalizePackMetadata(metadata));
+  }
+});
+
 // Capture bytes, modes, and link text without following package symlinks.
 async function inventory(root) {
   const entries = [];
@@ -112,10 +146,9 @@ for (const useFiles of [true, false]) {
       NPM_CONFIG_CACHE: join(home, "cache"), NPM_CONFIG_UPDATE_NOTIFIER: "false" };
     const pack = async (input, label) => {
       const output = join(root, label); await mkdir(output);
-      const rows = JSON.parse(execFileSync("npm", ["pack", input, "--ignore-scripts", "--json", "--pack-destination", output],
-        { cwd: output, env, encoding: "utf8", timeout: 60_000, maxBuffer: 1024 * 1024 }));
-      assert.equal(rows.length, 1);
-      return { files: rows[0].files, archive: await readFile(join(output, rows[0].filename)) };
+      const rows = normalizePackMetadata(JSON.parse(execFileSync("npm", ["pack", input, "--ignore-scripts", "--json", "--pack-destination", output],
+        { cwd: output, env, encoding: "utf8", timeout: 60_000, maxBuffer: 1024 * 1024 })));
+      return { files: rows.files, archive: await readFile(join(output, rows.filename)) };
     };
     // Check actual archive bytes against the installed input; the failing npm
     // directory traversal itself is reproduced separately on Linux CI.

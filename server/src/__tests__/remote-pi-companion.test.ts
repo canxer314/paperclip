@@ -20,15 +20,21 @@ afterEach(() => { hooks.mkdir = undefined; hooks.rename = undefined; hooks.open 
 const hash = (bytes: string | Buffer) => createHash("sha256").update(bytes).digest("hex");
 const canonical = (v: any): string => Array.isArray(v) ? `[${v.map(canonical).join(",")}]` : v && typeof v === "object" ? `{${Object.keys(v).sort().map(k => `${JSON.stringify(k)}:${canonical(v[k])}`).join(",")}}` : JSON.stringify(v);
 async function fixture() {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "paperclip-companion-"))); roots.push(root);
-  const source = "a".repeat(40); const serverRoot = join(root, "server"); const directory = join(root, "release");
-  mkdirSync(join(serverRoot, "dist"), { recursive: true }); writeFileSync(join(serverRoot, "package.json"), '{"name":"@paperclipai/server"}'); writeFileSync(join(serverRoot, "dist/build-info.json"), JSON.stringify({ commit: source }));
-  mkdirSync(join(directory, "bin"), { recursive: true }); mkdirSync(join(directory, "provider-pack"));
-  // Synthetic ELF header; these tests never launch it or claim native qualification.
-  const elf = Buffer.alloc(128); Buffer.from([127, 69, 76, 70, 2, 1]).copy(elf); elf.writeUInt16LE(62, 18); writeFileSync(join(directory, "bin/paperclip-runnerd"), elf, { mode: 0o755 });
-  const payload = { runnerSourceRevision: source, target: { platform: "linux", architecture: "x64" }, candidateProviders: { pi: { qualification: "qualified", profileDigest: QUALIFIED_ACPX_PROFILES.pi.commandDigest, path: "provider-assets/pi/linux-x64" } } };
-  writeFileSync(join(directory, "provider-pack/provider-pack.json"), JSON.stringify({ schema: "paperclip-runner/remote-provider-pack/v1", digest: `sha256:${hash(canonical(payload))}`, payload }));
-  const manifest = await createRemotePiCompanionManifest(directory, source); const bytes = JSON.stringify(manifest); writeFileSync(join(directory, "companion.json"), bytes); return { root, directory, serverRoot, sha256: hash(bytes), manifest, source };
+  const previousUmask = process.umask(0o002);
+  try {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "paperclip-companion-"))); roots.push(root);
+    const source = "a".repeat(40); const serverRoot = join(root, "server"); const directory = join(root, "release");
+    mkdirSync(join(serverRoot, "dist"), { recursive: true, mode: 0o700 }); chmodSync(serverRoot, 0o700); chmodSync(join(serverRoot, "dist"), 0o700);
+    writeFileSync(join(serverRoot, "package.json"), '{"name":"@paperclipai/server"}'); writeFileSync(join(serverRoot, "dist/build-info.json"), JSON.stringify({ commit: source }));
+    mkdirSync(join(directory, "bin"), { recursive: true, mode: 0o700 }); mkdirSync(join(directory, "provider-pack"), { mode: 0o700 });
+    chmodSync(directory, 0o700); chmodSync(join(directory, "bin"), 0o700); chmodSync(join(directory, "provider-pack"), 0o700);
+    // Synthetic ELF header; these tests never launch it or claim native qualification.
+    const elf = Buffer.alloc(128); Buffer.from([127, 69, 76, 70, 2, 1]).copy(elf); elf.writeUInt16LE(62, 18); writeFileSync(join(directory, "bin/paperclip-runnerd"), elf, { mode: 0o755 });
+    const payload = { runnerSourceRevision: source, target: { platform: "linux", architecture: "x64" }, candidateProviders: { pi: { qualification: "qualified", profileDigest: QUALIFIED_ACPX_PROFILES.pi.commandDigest, path: "provider-assets/pi/linux-x64" } } };
+    const packPath = join(directory, "provider-pack/provider-pack.json");
+    writeFileSync(packPath, JSON.stringify({ schema: "paperclip-runner/remote-provider-pack/v1", digest: `sha256:${hash(canonical(payload))}`, payload }), { mode: 0o644 }); chmodSync(packPath, 0o644);
+    const manifest = await createRemotePiCompanionManifest(directory, source); const bytes = JSON.stringify(manifest); writeFileSync(join(directory, "companion.json"), bytes, { mode: 0o600 }); return { root, directory, serverRoot, sha256: hash(bytes), manifest, source };
+  } finally { process.umask(previousUmask); }
 }
 it("imports the release-generated closure and resolves target bytes without environment overrides", async () => {
   const f = await fixture(); const result = await importRemotePiCompanion(f); expect(result.status).toBe("imported_verified");
@@ -134,7 +140,8 @@ it("honors deadline expiry after re-verifying an existing cache without deleting
 });
 
 async function largeFixture() {
-  const f = await fixture(); writeFileSync(join(f.directory, "provider-pack/large"), Buffer.alloc(8 * 1024 ** 2, 0x61));
+  const f = await fixture(); const largeFile = join(f.directory, "provider-pack/large");
+  writeFileSync(largeFile, Buffer.alloc(8 * 1024 ** 2, 0x61), { mode: 0o600 }); chmodSync(largeFile, 0o600);
   f.manifest = await createRemotePiCompanionManifest(f.directory, f.source);
   const bytes = JSON.stringify(f.manifest); writeFileSync(join(f.directory, "companion.json"), bytes); f.sha256 = hash(bytes); return f;
 }

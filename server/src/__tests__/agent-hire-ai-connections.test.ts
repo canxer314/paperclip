@@ -34,9 +34,13 @@ let database: Awaited<ReturnType<typeof startEmbeddedPostgresTestDatabase>>;
 const externalTestDatabaseUrl = process.env.PAPERCLIP_TEST_DATABASE_URL?.trim();
 let db: ReturnType<typeof createDb>;
 let home: string;
+let cleanCwd: string;
+const originalCwd = process.cwd();
 
 beforeAll(async () => {
   home = await mkdtemp(path.join(os.tmpdir(), "paperclip-hire-ai-"));
+  cleanCwd = await mkdtemp(path.join(os.tmpdir(), "paperclip-hire-ai-cwd-"));
+  process.chdir(cleanCwd);
   vi.stubEnv("PAPERCLIP_HOME", home);
   vi.stubEnv("PAPERCLIP_INSTANCE_ID", "hire-ai");
   vi.stubEnv("PAPERCLIP_IN_WORKTREE", "false");
@@ -48,12 +52,23 @@ beforeAll(async () => {
 }, 90_000);
 
 afterAll(async () => {
-  await waitForPendingRunFailureReports();
-  if (externalTestDatabaseUrl) await closeRegisteredClients(externalTestDatabaseUrl);
-  await db?.$client.end();
-  await database?.cleanup();
-  vi.unstubAllEnvs();
-  if (home) await rm(home, { recursive: true, force: true });
+  try {
+    await waitForPendingRunFailureReports();
+    if (externalTestDatabaseUrl) await closeRegisteredClients(externalTestDatabaseUrl);
+    await db?.$client.end();
+    await database?.cleanup();
+  } finally {
+    try {
+      vi.unstubAllEnvs();
+      if (home) await rm(home, { recursive: true, force: true });
+    } finally {
+      try {
+        process.chdir(originalCwd);
+      } finally {
+        if (cleanCwd) await rm(cleanCwd, { recursive: true, force: true });
+      }
+    }
+  }
 });
 
 async function fixture(provider: "anthropic" | "openai", method: "api_key" | "subscription" = "api_key") {

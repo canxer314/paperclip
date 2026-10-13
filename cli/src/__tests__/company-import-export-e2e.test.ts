@@ -11,6 +11,10 @@ import {
   startEmbeddedPostgresTestDatabase,
 } from "./helpers/embedded-postgres.js";
 import { createStoredZipArchive } from "./helpers/zip.js";
+import { resolveTestPnpmInvocation } from "./helpers/pnpm.js";
+
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+let pnpm: ReturnType<typeof resolveTestPnpmInvocation>;
 
 const execFileAsync = promisify(execFile);
 type ServerProcess = ReturnType<typeof spawn>;
@@ -111,7 +115,7 @@ interface TestPaperclipEnv {
   shellHome?: string;
 }
 
-function createBasePaperclipEnv(options: TestPaperclipEnv) {
+export function createBasePaperclipEnv(options: TestPaperclipEnv) {
   const env = { ...process.env };
   for (const key of Object.keys(env)) {
     if (key.startsWith("PAPERCLIP_")) {
@@ -126,6 +130,18 @@ function createBasePaperclipEnv(options: TestPaperclipEnv) {
   env.PAPERCLIP_AUTH_STORE = path.join(options.paperclipHome, "auth.json");
   if (options.shellHome) {
     env.HOME = options.shellHome;
+  }
+  // Exercise every server/CLI launch without a usable PATH shim or cache.
+  env.COREPACK_HOME = path.join(options.paperclipHome, "empty-corepack-cache");
+  env.COREPACK_ENABLE_NETWORK = "0";
+  if (options.shellHome) {
+    // Node on Windows uses the first lexicographically sorted PATH key.
+    // Match that choice before removing duplicates, even for ordinary objects.
+    const pathKeys = Object.keys(env).filter((key) => key.toLowerCase() === "path").sort();
+    const pathKey = pathKeys[0] ?? "PATH";
+    const searchPath = env[pathKey] ?? "";
+    for (const key of pathKeys.slice(1)) delete env[key];
+    env[pathKey] = `${path.join(options.shellHome, "bin")}${path.delimiter}${searchPath}`;
   }
 
   return env;
@@ -218,7 +234,6 @@ async function runCliJson<T>(
   args: string[],
   opts: TestPaperclipEnv & { apiBase?: string; includeConfigArg?: boolean },
 ) {
-  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
   const cliArgs = ["--silent", "paperclipai", ...args];
   if (opts.apiBase) {
     cliArgs.push("--api-base", opts.apiBase);
@@ -228,8 +243,8 @@ async function runCliJson<T>(
   }
   cliArgs.push("--json");
   const result = await execFileAsync(
-    "pnpm",
-    cliArgs,
+    pnpm.command,
+    [...pnpm.argsPrefix, ...cliArgs],
     {
       cwd: repoRoot,
       env: createCliEnv(opts),
@@ -284,6 +299,9 @@ describeEmbeddedPostgres("paperclipai company import/export e2e", () => {
   let tempDb: Awaited<ReturnType<typeof startEmbeddedPostgresTestDatabase>> | null = null;
 
   beforeAll(async () => {
+    // Resolve in the caller's environment, before creating isolated HOME/cache.
+    // Unsupported hosts skip this hook and do not need pnpm installed.
+    pnpm = resolveTestPnpmInvocation(repoRoot);
     tempRoot = mkdtempSync(path.join(os.tmpdir(), "paperclip-company-cli-e2e-"));
     configPath = path.join(tempRoot, "config", "config.json");
     exportDir = path.join(tempRoot, "exported-company");
@@ -292,6 +310,16 @@ describeEmbeddedPostgres("paperclipai company import/export e2e", () => {
     paperclipInstanceId = "company-cli-e2e";
     mkdirSync(paperclipHome, { recursive: true });
     mkdirSync(cliShellHome, { recursive: true });
+    mkdirSync(path.join(cliShellHome, "bin"));
+    if (process.platform === "win32") {
+      writeFileSync(path.join(cliShellHome, "bin", "pnpm.cmd"),
+        "@echo PATH pnpm shim must not be used 1>&2\r\n@exit /b 99\r\n");
+    } else {
+      writeFileSync(path.join(cliShellHome, "bin", "pnpm"),
+        '#!/bin/sh\necho "PATH pnpm shim must not be used" >&2\nexit 99\n',
+        { mode: 0o755 });
+    }
+    mkdirSync(path.join(paperclipHome, "empty-corepack-cache"));
 
     tempDb = await startEmbeddedPostgresTestDatabase("paperclip-company-cli-db-");
 
@@ -299,11 +327,10 @@ describeEmbeddedPostgres("paperclipai company import/export e2e", () => {
     writeTestConfig(configPath, tempRoot, port, tempDb.connectionString);
     apiBase = `http://127.0.0.1:${port}`;
 
-    const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
     const output = { stdout: [] as string[], stderr: [] as string[] };
     const child = spawn(
-      "pnpm",
-      ["paperclipai", "run", "--config", configPath],
+      pnpm.command,
+      [...pnpm.argsPrefix, "paperclipai", "run", "--config", configPath],
       {
         cwd: repoRoot,
         env: createServerEnv(configPath, port, tempDb.connectionString, {
@@ -619,5 +646,6 @@ describeEmbeddedPostgres("paperclipai company import/export e2e", () => {
 
     expect(importedFromZip.company.action).toBe("created");
     expect(importedFromZip.agents.some((agent) => agent.action === "created")).toBe(true);
+    expect(readdirSync(path.join(paperclipHome, "empty-corepack-cache"))).toEqual([]);
   }, 90_000);
 });
