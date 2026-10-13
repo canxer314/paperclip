@@ -4,6 +4,7 @@ import { createAgentLifecycle, scheduleAgentLifecycle } from "./agent-lifecycle.
 import { agentLifecycleCompanyDeletion } from "../modules/agent-lifecycle/company-deletion.js";
 import {
   companies,
+  companyClaudeHostAccess,
   agents,
   companyLogos,
   assets,
@@ -74,6 +75,7 @@ export async function deleteCompany(db: Db, id: string) {
             .where(inArray(heartbeatRunEvents.runId, companyRunIds.map((run) => run.id)));
         }
         await tx.delete(agentTaskSessions).where(eq(agentTaskSessions.companyId, id));
+        await tx.delete(companyClaudeHostAccess).where(eq(companyClaudeHostAccess.companyId, id));
         await tx.delete(activityLog).where(eq(activityLog.companyId, id));
         await tx.delete(runIdentityContexts).where(eq(runIdentityContexts.companyId, id));
         await tx.delete(heartbeatRuns).where(eq(heartbeatRuns.companyId, id));

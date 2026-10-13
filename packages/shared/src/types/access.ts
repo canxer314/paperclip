@@ -168,3 +168,12 @@ export interface UserCompanyAccessResponse {
   }) | null;
   companyAccess: UserCompanyAccessEntry[];
 }
+
+export interface ClaudeHostAccessState {
+  enabled: boolean;
+}
+
+export interface ClaudeHostAccessCompany extends ClaudeHostAccessState {
+  id: string;
+  name: string;
+}

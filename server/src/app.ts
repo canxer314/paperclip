@@ -138,6 +138,7 @@ import {
 import { llmRoutes } from "./routes/llms.js";
 import { authRoutes } from "./routes/auth.js";
 import { assetRoutes } from "./routes/assets.js";
+import { claudeHostAccessRoutes } from "./routes/claude-host-access.js";
 import { accessRoutes } from "./routes/access.js";
 import { pluginRoutes } from "./routes/plugins.js";
 import {
@@ -1049,6 +1050,7 @@ export async function createApp(
       authPublicBaseUrl: opts.authPublicBaseUrl,
     }),
   );
+  api.use(claudeHostAccessRoutes(db));
   let publicMcpEvents: PublicMcpEvents | null = null;
   let dotMcpEvents: PublicMcpEvents | null = null;
   if (publicMcpOAuth) {

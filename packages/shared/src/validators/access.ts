@@ -220,3 +220,6 @@ export const updateCurrentUserProfileSchema = z.object({
 });
 
 export type UpdateCurrentUserProfile = z.infer<typeof updateCurrentUserProfileSchema>;
+
+export const setClaudeHostAccessSchema = z.object({ enabled: z.boolean() }).strict();
+export type SetClaudeHostAccess = z.infer<typeof setClaudeHostAccessSchema>;

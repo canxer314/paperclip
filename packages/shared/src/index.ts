@@ -2871,3 +2871,6 @@ export { AGENT_LIFECYCLE_STATES, type AgentLifecycleState, type AgentLifecycleOp
 export type { AgentLifecycleRequest, AgentLifecycleResult } from "./types/agent-lifecycle.js";
 
 export * from "./fast-response.js";
+
+export type { ClaudeHostAccessState, ClaudeHostAccessCompany } from "./types/access.js";
+export { setClaudeHostAccessSchema, type SetClaudeHostAccess } from "./validators/access.js";

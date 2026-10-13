@@ -2122,3 +2122,15 @@ The internal service provides local-only availability and bounded, reauthorized 
 ## Company fast-response service
 
 Companies may configure an optional shared API connection and model for short acknowledgements of accepted human turns. Fast responses use direct SDK inference alongside normal agent work, with a three-second admission deadline, bounded prompts/output, current authorization and independent `fast_response` accounting. They are server-marked platform receipts attributed to the agent, never completion, interaction or recovery evidence. Company-sponsored unlinked external senders are explicit; linked-user permission denials are never bypassed. See [fast-responses.md](fast-responses.md) for provider, delivery, history and endpoint contracts.
+
+
+## Claude host permission administration
+
+Company permission for Claude server configuration is managed independently in
+`/instance/access`. It defaults to deny without backfill and is audited atomically
+with each explicit instance-admin setting request. Administrators need no target
+membership but gain no company business access. Company state queries retain
+existing isolation. Restoring onto a new host requires revoke/regrant; host changes
+are not detected. Existing adapter sources remain unchanged. This administration
+slice does not implement host-source execution; see #24 and the permission notes
+in [PRODUCT.md](PRODUCT.md#claude-server-configuration-permission).

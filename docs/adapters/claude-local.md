@@ -151,3 +151,45 @@ merged under the adapter config's `env`, so environment-level auth is
 reflected in the test result. A secret binding that is missing surfaces as
 an `environment_env_binding_missing` failure instead of a silently passing
 probe.
+
+
+## Company permission for server configuration
+
+An instance administrator can open **Instance Access** from the account menu
+(`/instance/access`) and grant or revoke a company’s Claude server configuration
+permission. This block is independent of the user selected for membership editing.
+An administrator needs no membership in the target company to manage permission;
+permission does not give the administrator or company users any additional
+company business access. Ordinary board users and agent keys cannot grant it.
+
+Existing companies start with permission denied. Granting permission stores no
+credentials, native identity or configuration paths and does not check login or
+call a model. Existing Claude adapter configuration modes continue to work.
+Host-source selection and execution enforcement are part of the remaining #24
+implementation, not proof supplied by this permission setting.
+
+If the host permission directory fails, retry its directory action; it is not an
+empty directory or a denial result. If an individual update fails, the row shows
+an error and does not claim the change succeeded. Reload the directory to confirm
+current permission before retrying. Only that row is disabled while its update
+is pending.
+
+**Restore to another host:** revoke and explicitly regrant company permissions
+after checking the new execution host and runtime user. Paperclip does not detect
+host changes automatically. The server is not the computer running your browser.
+Permission is not evidence of successful authentication or model availability.
+
+API contracts:
+
+- `GET /api/instance/claude-host-access`: instance admin, only company ID/name/enabled.
+- `PUT /api/instance/claude-host-access/:companyId`: instance admin, `{ "enabled": true | false }`.
+- `GET /api/companies/:companyId/claude-host-access`: existing company access, `{ "enabled": boolean }`.
+
+Unauthenticated requests return 401, non-admin administration requests 403,
+unknown companies 404, invalid payloads 400 and database failures server errors.
+Unauthorized company queries use existing resource hiding. Every setting request,
+including a repeated grant or revoke, is activity-audited with its actor, company,
+before/after state and whether it changed. Company deletion removes permission.
+
+Permission administration adds no Telemetry event or OTLP span, does not change
+unconfigured Observability’s no-op behavior, and leaves run-log data in the instance database.
