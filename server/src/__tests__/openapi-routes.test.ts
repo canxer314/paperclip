@@ -58,6 +58,7 @@ const apiPrefixes: Record<string, string> = {
   "inbox-dismissals.ts": "/api",
   "instance-database-backups.ts": "/api",
   "instance-settings.ts": "/api",
+  "claude-host-access.ts": "/api",
   "issues.ts": "/api",
   "issue-tree-control.ts": "/api",
   "llms.ts": "/api",
@@ -894,6 +895,67 @@ describe("openapi routes", () => {
       extraInSpec: [],
       excludedRoutes: [...explicitOpenApiOperationCoverageExclusions].sort(),
     });
+  });
+
+  it("documents Claude host access contracts and instance-admin authorization", () => {
+    const { spec } = loadSpecRoutes();
+    const list = spec.paths["/api/instance/claude-host-access"].get;
+    const update = spec.paths["/api/instance/claude-host-access/{companyId}"].put;
+    const read = spec.paths["/api/companies/{companyId}/claude-host-access"].get;
+
+    for (const operation of [list, update]) {
+      expect(operation.security).toEqual([
+        { BoardSessionAuth: [] },
+        { BoardApiKeyAuth: [] },
+      ]);
+      expect(operation["x-paperclip-authorization"]).toEqual({
+        actor: "board",
+        instanceAdmin: true,
+      });
+      expect(operation.responses["403"]).toBeDefined();
+    }
+    expect(list.responses["200"].content["application/json"].schema).toMatchObject({
+      type: "array",
+      items: {
+        type: "object",
+        required: ["id", "name", "enabled"],
+        properties: {
+          id: { type: "string", format: "uuid" },
+          name: { type: "string" },
+          enabled: { type: "boolean" },
+        },
+      },
+    });
+    expect(update.parameters).toEqual([
+      { name: "companyId", in: "path", required: true, schema: { type: "string", format: "uuid" } },
+    ]);
+    expect(update.requestBody.content["application/json"].schema).toMatchObject({
+      type: "object",
+      additionalProperties: false,
+      required: ["enabled"],
+      properties: { enabled: { type: "boolean" } },
+    });
+    expect(read.security).toEqual([
+      { BoardSessionAuth: [] },
+      { BoardApiKeyAuth: [] },
+      { AgentBearerAuth: [] },
+    ]);
+    expect(read["x-paperclip-authorization"]).toEqual({ actor: "board_or_agent" });
+    expect(read.parameters).toEqual([
+      { name: "companyId", in: "path", required: true, schema: { type: "string", format: "uuid" } },
+    ]);
+    expect(read.responses["200"].content["application/json"].schema).toMatchObject({
+      type: "object",
+      required: ["enabled"],
+      properties: { enabled: { type: "boolean" } },
+    });
+    expect(list.responses["500"]).toBeDefined();
+    expect(update.responses["500"]).toBeDefined();
+    expect(read.responses["500"]).toBeDefined();
+    expect(list.responses["403"]).toBeDefined();
+    expect(update.responses["403"]).toBeDefined();
+    expect(update.responses["404"]).toBeDefined();
+    expect(read.responses["404"]).toBeDefined();
   });
 
   it("documents the authenticated personal primary-agent contract", () => {
