@@ -58,8 +58,11 @@
 ## Verification
 
 <!--
-  How can a reviewer confirm this works? Include test commands, manual
-  steps, or both.
+  Follow AGENTS.md section 7 for this local-use fork. GitHub CI and Greptile are
+  optional. Upstream submissions must meet upstream's current requirements.
+  Record the exact revision and clean-worktree status, commands and outcomes,
+  review results, and failed/interrupted/skipped checks. For segmented full
+  verification, show complete suite coverage and each segment's outcome.
 -->
 
 -
@@ -99,10 +102,13 @@
 - [ ] I have either (a) linked existing issues with `Fixes: #` / `Closes #` / `Refs #` OR (b) described the issue in-PR following the relevant issue template
 - [ ] I have not referenced internal/instance-local Paperclip issues or links (only public GitHub `#NNN` / `github.com/paperclipai/paperclip` URLs)
 - [ ] My branch name describes the change (e.g. `docs/...`, `fix/...`) and contains no internal Paperclip ticket id or instance-derived details
-- [ ] I have run tests locally and they pass
+- [ ] Required local checks pass on the exact PR revision in a clean worktree, or the user has explicitly accepted the documented gaps
 - [ ] I have added or updated tests where applicable
 - [ ] I have updated relevant documentation to reflect my changes
 - [ ] I have considered and documented any risks above
-- [ ] All Paperclip CI gates are green
-- [ ] Greptile is 5/5 with no open P2s, recommendations, or follow-ups
-- [ ] I will address all Greptile and reviewer comments before requesting merge
+- [ ] Independent code review is complete and confirmed findings are resolved
+- [ ] Failed, interrupted, skipped, and non-applicable checks are recorded with their reasons
+
+GitHub CI and Greptile are optional for this fork. If used, include their results
+and address confirmed findings in Verification. For upstream submissions, record
+compliance with upstream's current CI and review requirements.

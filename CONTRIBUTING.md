@@ -1,5 +1,13 @@
 # Contributing Guide
 
+## Local-use fork policy
+
+For PRs into `canxer314/paperclip`, use the local verification and merge policy
+in [AGENTS.md section 7](AGENTS.md#7-verification-before-hand-off). GitHub CI and
+Greptile are optional. The mandatory CI, Greptile, and upstream coordination
+requirements below describe contributions to `paperclipai/paperclip`, not local
+fork merges. Use upstream's current rules when submitting there.
+
 Thanks for wanting to contribute!
 
 We really appreciate both small fixes and thoughtful larger changes.
