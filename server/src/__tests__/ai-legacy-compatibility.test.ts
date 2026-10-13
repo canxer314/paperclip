@@ -49,7 +49,7 @@ it("reconnect detaches an indexed credential without changing unadopted legacy a
   const migration = await readFile(new URL("../../../packages/db/src/migrations/0276_hard_mandroid.sql", import.meta.url), "utf8");
   await db.execute(sql.raw(migration.slice(migration.indexOf("DO $$", migration.indexOf("-- Only declared")))));
   const connection = (await service.list(companyId, owner)).find(c => c.name === secret.name)!;
-  const input = { companyId, agentId, responsibleUserId: owner, adapterType: "claude_local", binding: { provider: "anthropic", method: "api_key", mode: "delegated", connectionId: connection.id, grantId: connection.grantId } as const, config: {}, allowLegacyValidation: true };
+  const input = { companyId, agentId, responsibleUserId: owner, adapterType: "claude_local", binding: { provider: "anthropic", method: "api_key", mode: "delegated", connectionId: connection.id, grantId: connection.grantId } as const, config: { cwd: home }, allowLegacyValidation: true };
   const before = await prepareManagedAiRuntime(db, input);
   await before.cleanup();
   const resolve = () => vault.resolveUserSecretValue(companyId, { definitionId: definition.id, responsibleUserId: owner, required: true, version: "latest" }, { companyId, responsibleUserId: owner, actorType: "system" });

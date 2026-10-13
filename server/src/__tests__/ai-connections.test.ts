@@ -42,6 +42,8 @@ vi.mock("../services/local-ai-browser-login.js", () => ({
 let database: Awaited<ReturnType<typeof startEmbeddedPostgresTestDatabase>>;
 let db: ReturnType<typeof createDb>;
 let home: string;
+let cleanCwd: string;
+const originalCwd = process.cwd();
 const companyId = randomUUID();
 const otherCompanyId = randomUUID();
 const agentId = randomUUID();
@@ -52,6 +54,8 @@ const create = (userId: string, name: string, ownership: "personal" | "shared" =
 
 beforeAll(async () => {
   home = await realpath(await mkdtemp(path.join(os.tmpdir(), "paperclip-ai-tests-")));
+  cleanCwd = await realpath(await mkdtemp(path.join(os.tmpdir(), "paperclip-ai-cwd-")));
+  process.chdir(cleanCwd);
   vi.stubEnv("PAPERCLIP_HOME", home);
   vi.stubEnv("PAPERCLIP_INSTANCE_ID", "ai-connection-fixture");
   database = await startEmbeddedPostgresTestDatabase("paperclip-ai-db-");
@@ -61,7 +65,22 @@ beforeAll(async () => {
   await db.insert(agents).values({ id: agentId, companyId, name: "Nova", adapterType: "claude_local" });
   await db.insert(companyMemberships).values(["alice", "bob"].map(principalId => ({ companyId, principalId, principalType: "user", status: "active", membershipRole: "member" })));
 }, 90000);
-afterAll(async () => { await database?.cleanup(); vi.unstubAllEnvs(); if (home) await rm(home, { recursive: true, force: true }); });
+afterAll(async () => {
+  try {
+    await database?.cleanup();
+  } finally {
+    try {
+      vi.unstubAllEnvs();
+      if (home) await rm(home, { recursive: true, force: true });
+    } finally {
+      try {
+        process.chdir(originalCwd);
+      } finally {
+        if (cleanCwd) await rm(cleanCwd, { recursive: true, force: true });
+      }
+    }
+  }
+});
 
 describe("managed AI connections", () => {
   it("marks explicit AI selection rejections without changing their HTTP contract", async () => {

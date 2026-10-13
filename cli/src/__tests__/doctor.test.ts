@@ -87,15 +87,24 @@ function createTempConfig(serverPort: number): string {
 }
 
 describe("doctor", () => {
+  let isolatedHome: string;
+
   beforeEach(() => {
     process.env = { ...ORIGINAL_ENV };
+    isolatedHome = fs.mkdtempSync(path.join(os.tmpdir(), "paperclip-doctor-home-"));
+    process.env.HOME = isolatedHome;
+    process.env.PAPERCLIP_HOME = path.join(isolatedHome, "paperclip");
     delete process.env.PAPERCLIP_AGENT_JWT_SECRET;
     delete process.env.PAPERCLIP_SECRETS_MASTER_KEY;
     delete process.env.PAPERCLIP_SECRETS_MASTER_KEY_FILE;
   });
 
   afterEach(() => {
-    process.env = { ...ORIGINAL_ENV };
+    try {
+      fs.rmSync(isolatedHome, { recursive: true, force: true });
+    } finally {
+      process.env = { ...ORIGINAL_ENV };
+    }
   });
 
   it("re-runs repairable checks so repaired failures do not remain blocking", async () => {

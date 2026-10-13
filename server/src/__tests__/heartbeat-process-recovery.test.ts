@@ -1612,7 +1612,8 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     "preserves AI configuration recovery and reports only unexpected causes: %s", async (cause) => {
       const { companyId, agentId, issueId, runId, wakeupRequestId } = await seedQueuedIssueRunFixture();
       await db.insert(companyMemberships).values({ companyId, principalType: "user", principalId: "responsible-user", status: "active", membershipRole: "member" });
-      await db.update(agents).set({ runtimeConfig: {
+      const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "ai-recovery-workspace-"));
+      await db.update(agents).set({ adapterConfig: { cwd }, runtimeConfig: {
         heartbeat: { wakeOnDemand: true, maxConcurrentRuns: 1 },
         aiConnection: { provider: "openai", method: "api_key", mode: "responsible_user" },
       } }).where(eq(agents.id, agentId));
@@ -1657,6 +1658,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
         expect(wakeup.status).toBe("failed");
       } finally {
         prepare.mockRestore();
+        await fs.rm(cwd, { recursive: true, force: true });
         await db.delete(companyMemberships).where(eq(companyMemberships.companyId, companyId));
       }
     },

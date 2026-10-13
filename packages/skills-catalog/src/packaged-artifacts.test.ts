@@ -8,17 +8,39 @@ import { afterEach, describe, expect, it } from "vitest";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
+function normalizePackMetadata(metadata: unknown, output: string) {
+  const row = Array.isArray(metadata)
+    ? metadata[0]
+    : metadata && typeof metadata === "object"
+      ? Object.values(metadata)[0]
+      : undefined;
+  if (!row || typeof row !== "object" || typeof (row as { filename?: unknown }).filename !== "string" || !Array.isArray((row as { files?: unknown }).files)) {
+    throw new Error(`Unexpected npm pack output from ${packageRoot}: ${output}`);
+  }
+  return row as { filename: string; files: Array<{ path: string }> };
+}
+
 function readPackMetadata(packDestination: string) {
   const output = execFileSync("npm", ["pack", "--json", "--pack-destination", packDestination], {
     cwd: packageRoot,
     encoding: "utf8",
   });
-  const metadata = JSON.parse(output);
-  if (!Array.isArray(metadata) || metadata.length === 0 || typeof metadata[0]?.filename !== "string") {
-    throw new Error(`Unexpected npm pack output from ${packageRoot}: ${output}`);
-  }
-  return metadata[0] as { filename: string; files: Array<{ path: string }> };
+  return normalizePackMetadata(JSON.parse(output), output);
 }
+
+describe("npm pack metadata compatibility", () => {
+  it.each([
+    ["legacy array", [{ filename: "legacy.tgz", files: [] }], "legacy.tgz"],
+    ["npm 12 keyed object", { "@paperclipai/skills-catalog": { filename: "npm12.tgz", files: [] } }, "npm12.tgz"],
+  ])("normalizes %s output", (_label, metadata, filename) => {
+    expect(normalizePackMetadata(metadata, JSON.stringify(metadata)).filename).toBe(filename);
+  });
+
+  it.each([null, {}, [], { package: {} }, [{ files: [] }], "invalid"])(
+    "rejects invalid npm pack metadata %j",
+    metadata => expect(() => normalizePackMetadata(metadata, JSON.stringify(metadata))).toThrow("Unexpected npm pack output"),
+  );
+});
 
 describe("skills catalog package artifacts", () => {
   const cleanup: string[] = [];
