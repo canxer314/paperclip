@@ -11137,6 +11137,8 @@ export async function createRunnerdBackend(input: {
   chatAttachmentReadScope?: NativeChatAttachmentReadScope;
   restartRecovery?: NativeRestartRecoveryClaim;
   durableEnvironmentLeaseId?: string;
+  /** Internal local command injection for provider wiring tests; not adapter config. */
+  codexCommand?: string;
   onSpawn?: (meta: {
     pid: number;
     processGroupId: number | null;
@@ -13282,7 +13284,7 @@ async function createRunnerdBackendWithinSessionClaim(
         prepareExternalRunnerState,
         archiveExternalRunnerState,
         runnerBinary: controllerRunnerBinary,
-        codexCommand: remoteCodexBinary ?? undefined,
+        codexCommand: remoteCodexBinary ?? input.codexCommand,
         sourceCodexHome: remoteTarget
           ? resolveSourceCodexHome(resolveNativeProviderEnvironment(input.execution.provider, input.runnerEnvironment))
           : undefined,

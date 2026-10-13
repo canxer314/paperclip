@@ -477,6 +477,14 @@ it("wires exact-session recovery and guarded selected identity into heartbeat pe
   expect(build).toContain("previousRun: previousNativeRun,");
 });
 
+it("keeps internal Codex command injection behind the remote command selection", () => {
+  const source = readFileSync(new URL("./native-session-executor.ts", import.meta.url), "utf8");
+  expect(source).toContain("codexCommand: remoteCodexBinary ?? input.codexCommand,");
+  // Production orchestration must not project adapter config into this seam.
+  const productionCall = source.slice(source.indexOf("? await createRunnerdBackend({"), source.indexOf("export async function createRunnerdBackend"));
+  expect(productionCall).not.toContain("codexCommand:");
+});
+
 const embeddedSupport = await getEmbeddedPostgresTestSupport();
 const recoveryFakeCodex = resolve(
   import.meta.dirname,
@@ -862,6 +870,7 @@ const recoveryFakeCodex = resolve(
         db,
         execution: firstExecution,
         runnerInstanceId,
+        codexCommand: command,
         runnerEnvironment: environment,
         onLog: onRunnerLog,
         onSpawn,
@@ -878,6 +887,20 @@ const recoveryFakeCodex = resolve(
       });
       ownedSessions.add(firstSession);
       const checkpoint = await firstSession.snapshot();
+      expect(checkpoint.sessionId).toBe("final-burst-thread");
+      const [stateKey] = (await readdir(stateBase)).filter((name) =>
+        /^[a-f0-9]{64}$/.test(name),
+      );
+      expect(stateKey).toBeDefined();
+      const root = join(stateBase, stateKey!);
+      const initialFakeProvider = JSON.parse(
+        await readFile(join(root, "codex-home", "fake-state.json"), "utf8"),
+      );
+      expect(initialFakeProvider).toEqual({
+        threadId: "final-burst-thread",
+        nextTurn: 0,
+        turns: {},
+      });
       expect(checkpoint.identity).toEqual({
         companyId,
         issueId,
@@ -889,11 +912,6 @@ const recoveryFakeCodex = resolve(
         reason: "Establish a suspended test-only historical root",
       });
       firstSession = undefined;
-      const [stateKey] = (await readdir(stateBase)).filter((name) =>
-        /^[a-f0-9]{64}$/.test(name),
-      );
-      expect(stateKey).toBeDefined();
-      const root = join(stateBase, stateKey!);
       const runnerPath = join(root, "runner", "runner-state.json");
       const providerPath = join(root, "runner", "codex-provider-state.json");
       const runner = JSON.parse(await readFile(runnerPath, "utf8"));
@@ -967,6 +985,7 @@ const recoveryFakeCodex = resolve(
           db,
           execution: currentExecution,
           runnerInstanceId,
+          codexCommand: command,
           runnerEnvironment: environment,
         }),
       ).rejects.toThrow("runner_state_identity_mismatch");
@@ -1013,6 +1032,7 @@ const recoveryFakeCodex = resolve(
         db,
         execution: currentExecution,
         runnerInstanceId,
+        codexCommand: command,
         runnerEnvironment: environment,
         onLog: onRunnerLog,
         onSpawn,

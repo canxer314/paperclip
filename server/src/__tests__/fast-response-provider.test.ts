@@ -1,5 +1,12 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { AiConnectionMetadata } from "@paperclipai/shared";
+
+beforeAll(() => {
+  vi.stubEnv("ANTHROPIC_BASE_URL", "https://api.anthropic.com");
+});
+afterAll(() => {
+  vi.unstubAllEnvs();
+});
 import {
   fastResponsePrompt,
   fastResponseReceipt,
