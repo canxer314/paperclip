@@ -743,3 +743,14 @@ Use the same root client for in-process writers. New queue insertion paths must
 register before writing, or they can remain unseen until the next startup or
 another notification. Tests should verify both the producer and its outer
 transaction boundary.
+
+
+## Claude host permission
+
+Migration `0333_vengeful_scorpion.sql` adds `company_claude_host_access` with a
+company primary key, deny-by-default enabled flag, update time and association to
+the setting request’s activity record. It creates no permission rows and does
+not backfill agents or costs. A missing row is denied. The company foreign key
+cascades on deletion; the existing company-deletion service clears permission
+before its existing activity cleanup. Grant/revoke transactions lock the company
+row and persist permission and activity together; publications happen after commit.

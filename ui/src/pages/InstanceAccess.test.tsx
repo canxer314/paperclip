@@ -11,6 +11,7 @@ import { InstanceAccess } from "./InstanceAccess";
 const mocks = vi.hoisted(() => ({
   list: vi.fn(), directory: vi.fn(), detachInflightList: vi.fn(), detachInflightDirectory: vi.fn(),
   getSession: vi.fn(), searchAdminUsers: vi.fn(), getUserCompanyAccess: vi.fn(),
+  listClaudeHostAccess: vi.fn(), setClaudeHostAccess: vi.fn(),
   setUserCompanyAccess: vi.fn(), setBreadcrumbs: vi.fn(), pushToast: vi.fn(),
 }));
 vi.mock("@/api/companies", () => ({ companiesApi: mocks }));
@@ -67,6 +68,8 @@ beforeEach(() => {
   mocks.searchAdminUsers.mockResolvedValue([user]);
   mocks.getUserCompanyAccess.mockResolvedValue({ user, companyAccess: [membershipA] });
   mocks.setUserCompanyAccess.mockResolvedValue({});
+  mocks.listClaudeHostAccess.mockResolvedValue([{ id: companyA.id, name: companyA.name, enabled: false }, { id: companyB.id, name: companyB.name, enabled: false }]);
+  mocks.setClaudeHostAccess.mockResolvedValue({ enabled: true });
   client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   container = document.createElement("div");
   document.body.appendChild(container);
@@ -136,5 +139,71 @@ describe("InstanceAccess company directory", () => {
     expect(button("Save organization access")).toBeUndefined();
     expect(button("Promote to instance admin")).toBeUndefined();
     expect(mocks.setUserCompanyAccess).not.toHaveBeenCalled();
+  });
+});
+
+describe("InstanceAccess Claude host permission", () => {
+  it("grants a company independently of the selected membership user", async () => {
+    mocks.searchAdminUsers.mockResolvedValue([user, { ...user, id: "other-user", name: "Other user" }]);
+    await renderPage();
+    await eventually(() => expect(button("Grant Company B host access")).toBeDefined());
+    await act(async () => { [...container.querySelectorAll("button")].find((item) => item.textContent?.includes("Other user"))!.click(); });
+    await act(async () => button("Grant Company B host access")!.click());
+    await eventually(() => expect(mocks.setClaudeHostAccess).toHaveBeenCalledWith(companyB.id, true));
+    expect(mocks.setUserCompanyAccess).not.toHaveBeenCalled();
+  });
+  it("keeps host permission available when the membership directory fails", async () => {
+    mocks.directory.mockRejectedValue(new Error("Membership directory unavailable"));
+    await renderPage();
+    await eventually(() => expect(button("Grant Company B host access")).toBeDefined());
+    expect(container.textContent).toContain("Failed to load organizations.");
+  });
+
+  it("disables only the pending row and reports row failure without changing permission", async () => {
+    let reject!: (error: Error) => void;
+    mocks.setClaudeHostAccess.mockImplementation(() => new Promise((_resolve, fail) => { reject = fail; }));
+    await renderPage();
+    await eventually(() => expect(button("Grant Company B host access")).toBeDefined());
+    await act(async () => button("Grant Company B host access")!.click());
+    await eventually(() => expect(button("Saving host access…")?.disabled).toBe(true));
+    expect(button("Grant Company A host access")?.disabled).toBe(false);
+    await act(async () => reject(new Error("sensitive backend error")));
+    await eventually(() => expect(container.textContent).toContain("Failed to update host access for Company B."));
+    expect(button("Grant Company B host access")).toBeDefined();
+    expect(container.textContent).not.toContain("sensitive backend error");
+  });
+
+  it("reads committed permission after grant and keeps revoke separate from membership", async () => {
+    await renderPage();
+    await eventually(() => expect(button("Grant Company B host access")).toBeDefined());
+    mocks.setClaudeHostAccess.mockImplementation(async (_companyId, enabled) => {
+      mocks.listClaudeHostAccess.mockResolvedValue([{ id: companyB.id, name: companyB.name, enabled }]);
+      return { enabled };
+    });
+    await act(async () => button("Grant Company B host access")!.click());
+    await eventually(() => expect(button("Revoke Company B host access")).toBeDefined());
+    await act(async () => button("Revoke Company B host access")!.click());
+    await eventually(() => expect(button("Grant Company B host access")).toBeDefined());
+    expect(mocks.setClaudeHostAccess).toHaveBeenLastCalledWith(companyB.id, false);
+    expect(mocks.setUserCompanyAccess).not.toHaveBeenCalled();
+  });
+
+  it("does not reuse permission cached for another account", async () => {
+    client.setQueryData(["access", "claude-host-access", "previous-user"], [{ id: "private-company", name: "Private company", enabled: true }]);
+    mocks.listClaudeHostAccess.mockResolvedValue([]);
+    await renderPage();
+    await eventually(() => expect(container.textContent).toContain("No organizations available for host access."));
+    expect(container.textContent).not.toContain("Private company");
+  });
+
+  it("shows directory failure separately and can retry", async () => {
+    mocks.listClaudeHostAccess.mockRejectedValue(new Error("Unavailable"));
+    await renderPage();
+    await eventually(() => expect(container.textContent).toContain("Failed to load Claude host access"));
+    expect(button("Save organization access")).toBeDefined();
+    expect(button("Grant Company B host access")).toBeUndefined();
+    mocks.listClaudeHostAccess.mockResolvedValue([]);
+    await act(async () => button("Retry host access directory")!.click());
+    await eventually(() => expect(container.textContent).toContain("No organizations available for host access."));
   });
 });

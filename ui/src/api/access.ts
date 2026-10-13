@@ -1,5 +1,7 @@
 import type { AgentAdapterType, JoinRequest, PermissionKey } from "@paperclipai/shared";
-import { api } from "./client";
+import { api, requestResponse } from "./client";
+import { readApiJson } from "./response";
+import type { ClaudeHostAccessCompany, ClaudeHostAccessState } from "@paperclipai/shared";
 
 export type HumanCompanyRole = "owner" | "admin" | "operator" | "viewer";
 
@@ -260,6 +262,13 @@ function buildInviteListQuery(options: {
 }
 
 export const accessApi = {
+  // Never coalesce across accounts or reuse browser HTTP cache for authorization state.
+  listClaudeHostAccess: async (signal?: AbortSignal) =>
+    readApiJson<ClaudeHostAccessCompany[]>(await requestResponse("/instance/claude-host-access", { signal, cache: "no-store" })),
+  getClaudeHostAccess: async (companyId: string, signal?: AbortSignal) =>
+    readApiJson<ClaudeHostAccessState>(await requestResponse(`/companies/${companyId}/claude-host-access`, { signal, cache: "no-store" })),
+  setClaudeHostAccess: (companyId: string, enabled: boolean) =>
+    api.put<ClaudeHostAccessState>(`/instance/claude-host-access/${companyId}`, { enabled }),
   createCompanyInvite: (
     companyId: string,
     input: {

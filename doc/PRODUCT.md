@@ -265,3 +265,32 @@ and `/settings/access`, including organization-prefixed variants) redirect to th
 same page. The operator's `instance.access` hiding policy applies to every entry;
 hiding a page is not authorization. Instance administration endpoints continue to
 require instance-admin authority. Other instance settings remain in their existing locations.
+
+
+### Claude server configuration permission
+
+Instance Access includes an independent, company-level Claude server configuration
+permission block. Instance administrators can grant or revoke permission without
+membership in the target company; this does not grant company business access.
+Ordinary board users, company administrators and agent keys cannot change it.
+Missing permission and explicit denial both deny access. Existing companies are
+not granted access on upgrade, and existing adapter sources remain unchanged.
+
+The instance directory returns only company ID, name and enabled state. Company
+queries return only their own enabled state under existing company authorization
+and resource-hiding rules. Every explicit setting request records actor, company,
+previous and requested state, and whether the state changed, atomically with the
+permission. Company deletion clears permission using existing audit retention rules.
+
+This permission does not verify native authentication or model availability. The
+server is the execution host and runtime user, not the browser computer. After
+restoring the database onto a different host, revoke and explicitly regrant
+permission after checking that host. Paperclip does not automatically detect a
+host change. Directory errors and per-company update errors remain distinct;
+failed queries are not reported as ordinary denial or successful authorization.
+
+This issue delivers permission administration only; host-source selection and
+execution admission are delivered by the remaining issues under #24. No provider
+request or credential read is part of granting permission. No new Telemetry events
+or OTLP spans are added; unconfigured Observability remains no-op and the run log
+remains in the instance database.

@@ -104,9 +104,13 @@ export function InstanceAccess() {
 
   if (companiesQuery.error) {
     return (
-      <div className="space-y-3">
-        <p className="text-sm text-destructive">Failed to load organizations. Try again before changing access.</p>
-        <Button onClick={() => void companiesQuery.refetch()}>Try again</Button>
+      <div className="max-w-6xl space-y-6">
+        <h1 className="text-lg font-semibold">Instance Access</h1>
+        <ClaudeHostAccess key={accountUserId} accountUserId={accountUserId} />
+        <div className="space-y-3">
+          <p className="text-sm text-destructive">Failed to load organizations. Try again before changing access.</p>
+          <Button onClick={() => void companiesQuery.refetch()}>Try again</Button>
+        </div>
       </div>
     );
   }
@@ -122,6 +126,8 @@ export function InstanceAccess() {
           Search users, manage instance-admin status, and control which organizations they can access.
         </p>
       </div>
+
+      <ClaudeHostAccess key={accountUserId} accountUserId={accountUserId} />
 
       <div className="grid gap-6 lg:grid-cols-(--gtc-34)">
         <Card className="block space-y-4 p-4">
@@ -261,6 +267,67 @@ export function InstanceAccess() {
           )}
         </Card>
       </div>
+    </div>
+  );
+}
+
+// This block owns its directory and row mutations, not the selected membership user.
+function ClaudeHostAccess({ accountUserId }: { accountUserId: string | null }) {
+  const directory = useQuery({
+    queryKey: queryKeys.access.claudeHostAccess(accountUserId),
+    queryFn: ({ signal }) => accessApi.listClaudeHostAccess(signal),
+    retry: false,
+  });
+  return (
+    <Card className="block space-y-4 p-5">
+      <h2 className="text-lg font-semibold">Claude server configuration access</h2>
+      <p className="text-sm text-muted-foreground">
+        Permit an organization to use the execution server’s Claude Code configuration.
+        The server and its runtime user are not the browser’s computer. This does not grant
+        organization membership or verify authentication or model availability.
+        After restoring to a new host, revoke and explicitly regrant access; host changes are not detected automatically.
+      </p>
+      <Button variant="outline" disabled={directory.isFetching} onClick={() => void directory.refetch()}>Refresh host access directory</Button>
+      {directory.isPending ? <p className="text-sm text-muted-foreground">Loading Claude host access…</p>
+        : directory.error ? <div className="space-y-2">
+          <p role="alert" className="text-sm text-destructive">Failed to load Claude host access. Retry before changing permission.</p>
+          <Button onClick={() => void directory.refetch()}>Retry host access directory</Button>
+        </div>
+        : directory.data?.length === 0 ? <p className="text-sm text-muted-foreground">No organizations available for host access.</p>
+        : <div className="space-y-3">{directory.data?.map((company) => (
+          <ClaudeHostAccessRow key={company.id} company={company} accountUserId={accountUserId} />
+        ))}</div>}
+    </Card>
+  );
+}
+
+function ClaudeHostAccessRow({ company, accountUserId }: {
+  company: import("@paperclipai/shared").ClaudeHostAccessCompany; accountUserId: string | null;
+}) {
+  const client = useQueryClient();
+  const mutation = useMutation({
+    mutationFn: (enabled: boolean) => accessApi.setClaudeHostAccess(company.id, enabled),
+    onSuccess: async () => {
+      // Read committed state instead of treating an optimistic draft as permission.
+      await client.invalidateQueries({ queryKey: queryKeys.access.claudeHostAccess(accountUserId) });
+      await client.invalidateQueries({ queryKey: queryKeys.access.companyClaudeHostAccess(company.id) });
+    },
+  });
+  return (
+    <div className="space-y-2 rounded-lg border border-border px-3 py-3">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <div className="text-sm font-medium">{company.name}</div>
+          <div className="text-sm text-muted-foreground">{company.enabled ? "Granted" : "Not granted"}</div>
+        </div>
+        <Button variant="outline" disabled={mutation.isPending}
+          onClick={() => mutation.mutate(!company.enabled)}>
+          {mutation.isPending ? "Saving host access…" : `${company.enabled ? "Revoke" : "Grant"} ${company.name} host access`}
+        </Button>
+      </div>
+      {mutation.error && <p role="alert" className="text-sm text-destructive">
+        Failed to update host access for {company.name}. Refresh the directory to confirm current permission, then retry.
+      </p>}
     </div>
   );
 }

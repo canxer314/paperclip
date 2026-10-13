@@ -761,3 +761,15 @@ A company may configure a shared decision model for optional Paperclip features.
 ### Fast responses
 
 A company may use a shared API model to acknowledge accepted human messages across tasks, agent chat and external channels while normal work starts. Acknowledgements retain their platform provenance and cannot satisfy execution or completion requirements. The bounded inference, authorization, sponsorship and independent accounting contract is defined in [fast-responses.md](fast-responses.md).
+
+
+## Claude host permission administration
+
+Company permission for Claude server configuration is managed independently in
+`/instance/access`. It defaults to deny without backfill and is audited atomically
+with each explicit instance-admin setting request. Administrators need no target
+membership but gain no company business access. Company state queries retain
+existing isolation. Restoring onto a new host requires revoke/regrant; host changes
+are not detected. Existing adapter sources remain unchanged. This administration
+slice does not implement host-source execution; see #24 and the permission notes
+in [PRODUCT.md](PRODUCT.md#claude-server-configuration-permission).

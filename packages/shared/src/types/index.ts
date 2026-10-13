@@ -982,6 +982,8 @@ export type {
   AttentionArchiveTargetSnapshot,
 } from "./decision.js";
 export type {
+  ClaudeHostAccessState,
+  ClaudeHostAccessCompany,
   AccessUserProfile,
   CompanyMemberRecord,
   CompanyMembersResponse,

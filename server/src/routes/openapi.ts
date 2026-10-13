@@ -1,4 +1,4 @@
-import { updateFastResponseSchema } from "@paperclipai/shared";
+import { updateFastResponseSchema, setClaudeHostAccessSchema } from "@paperclipai/shared";
 import { slackRegistrationSchema, slackSetupActionSchema, slackInstallAuthorizationSchema, slackRegistrationStateSchema, slackAppConfigurationSchema, slackAvatarStateSchema, slackAccountStateSchema } from "@paperclipai/shared";
 import { experimentalApiMetadata } from "./experimental-api-metadata.js";
 import {
@@ -1633,6 +1633,8 @@ const INSTANCE_ADMIN_OPERATIONS = new Set([
   "POST /api/companies",
   "POST /api/plugins/install",
   "POST /api/instance/database-backups",
+  "GET /api/instance/claude-host-access",
+  "PUT /api/instance/claude-host-access/{companyId}",
   "POST /api/admin/users/{userId}/promote-instance-admin",
   "POST /api/admin/users/{userId}/demote-instance-admin",
   "PUT /api/admin/users/{userId}/company-access",
@@ -6690,6 +6692,63 @@ registry.registerPath({
   summary: "Restore an inbox dismissal or snooze",
   request: { params: z.object({ companyId: z.string(), itemKey: z.string() }) },
   responses: { 204: r.ok(), 400: r.badRequest, 401: r.unauthorized },
+});
+
+// ─── Instance Claude host access ─────────────────────────────────────────────
+
+const claudeHostAccessCompanySchema = z.object({
+  id: z.string().uuid(),
+  name: z.string(),
+  enabled: z.boolean(),
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/instance/claude-host-access",
+  tags: ["instance"],
+  summary: "List company Claude host access settings",
+  description: "Lists each company's Claude host access setting. Requires an instance administrator.",
+  responses: {
+    200: r.ok(z.array(claudeHostAccessCompanySchema)),
+    401: r.unauthorized,
+    403: r.forbidden,
+    500: r.serverError,
+  },
+});
+
+registry.registerPath({
+  method: "put",
+  path: "/api/instance/claude-host-access/{companyId}",
+  tags: ["instance"],
+  summary: "Set a company's Claude host access setting",
+  description: "Sets a company's Claude host access setting and records the request in company activity, including idempotent requests. Requires an instance administrator.",
+  request: {
+    params: z.object({ companyId: z.string().uuid() }),
+    body: jsonBody(setClaudeHostAccessSchema),
+  },
+  responses: {
+    200: r.ok(z.object({ enabled: z.boolean() })),
+    400: r.badRequest,
+    401: r.unauthorized,
+    403: r.forbidden,
+    404: r.notFound,
+    500: r.serverError,
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/companies/{companyId}/claude-host-access",
+  tags: ["access"],
+  summary: "Read a company's Claude host access setting",
+  description: "Returns the Claude host access setting for a company the authenticated board user or agent can access; missing settings default to disabled. Returns 404 for inaccessible or nonexistent companies.",
+  request: { params: z.object({ companyId: z.string().uuid() }) },
+  responses: {
+    200: r.ok(z.object({ enabled: z.boolean() })),
+    401: r.unauthorized,
+    404: r.notFound,
+    500: r.serverError,
+  },
 });
 
 // ─── Instance settings ────────────────────────────────────────────────────────
