@@ -506,7 +506,27 @@ Use the cheap local default unless you are specifically working on browser flows
 pnpm test
 ```
 
-`pnpm test` runs the Vitest suite only. For interactive Vitest watch mode use:
+`pnpm test` runs the Vitest suite only. The stable runner retains every configured
+suite and the existing shard assignments. Serialized server suites run in batches
+of at most three files with `--no-file-parallelism --maxWorkers=1 --pool=forks
+--isolate`. A failed batch stops the runner with Vitest's nonzero exit status;
+remaining batches are not started. This reduces CLI startup overhead without
+sharing a worker between files or introducing a separate quick-test default.
+
+The server setup allocates a canonical, compact temporary root per test file for
+`PAPERCLIP_HOME`, `PAPERCLIP_CONFIG`, `TMPDIR`, and a distinct
+`PAPERCLIP_INSTANCE_ID`, without sharing filesystem state between files. Cleanup
+runs after suite teardown on normal worker exit or Vitest's fork-worker SIGTERM.
+`PAPERCLIP_TEST_HOST_HOME` remains available for read-only host checks; explicit
+test database configuration is unchanged.
+
+Focused runner and filesystem-isolation regression checks:
+
+```sh
+node --test scripts/__tests__/run-vitest-stable-cli.test.mjs scripts/__tests__/server-test-file-isolation.test.mjs scripts/__tests__/run-vitest-stable-shard.test.mjs
+```
+
+For interactive Vitest watch mode use:
 
 ```sh
 pnpm test:watch

@@ -552,16 +552,21 @@ function runSerializedSuites(routeTests, shardIndex, shardCount) {
     `\n[test:run] serialized shard ${shardIndex + 1}/${shardCount} running ${shardTests.length} of ${routeTests.length} suites`,
   );
 
-  for (const routeTest of shardTests) {
+  // Keep startup amortization bounded. setup-supertest gives each isolated
+  // fork its own filesystem root; no files execute concurrently in a batch.
+  const batchSize = 3;
+  for (let index = 0; index < shardTests.length; index += batchSize) {
+    const batch = shardTests.slice(index, index + batchSize);
     runVitest(
       [
         "--project",
         "@paperclipai/server",
-        routeTest.repoPath,
+        ...serializedServerVitestArgs,
+        ...batch.map((routeTest) => routeTest.repoPath),
         "--pool=forks",
         "--isolate",
       ],
-      routeTest.repoPath,
+      batch.map((routeTest) => routeTest.repoPath).join(", "),
     );
   }
 }
