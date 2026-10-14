@@ -2126,6 +2126,16 @@ Companies may configure an optional shared API connection and model for short ac
 
 ## Claude host permission administration
 
+First-company Agent setup and legacy onboarding use the shared source control
+and static host model catalog. Legal host configuration can be saved before
+permission or local verification succeeds, without querying/applying a stored
+Claude login, creating a managed connection or running a blocking full test.
+Optional local checks remain separate from Save Agent. Completion reports the
+saved record and local lifecycle state independently, then opens that same Agent
+for existing verification and repair instead of dispatching an onboarding task.
+Existing approval handling and route/leave rules remain. See
+[onboarding setup](claude-local-checks.md#first-company-and-legacy-onboarding).
+
 The independent New Agent flow defaults to the Paperclip source. Host uses the
 shared source control and static model catalog, keeps authentication/model/env
 drafts, and can finish a legal save without company host permission, CLI/cwd

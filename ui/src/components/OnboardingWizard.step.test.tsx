@@ -96,7 +96,9 @@ vi.mock("../context/CompanyContext", () => ({
 vi.mock("./AsciiArtAnimation", () => ({ AsciiArtAnimation: () => null }));
 vi.mock("./AgentCapsule", () => ({ AgentCapsule: () => null }));
 
-const { OnboardingWizard } = await import("./OnboardingWizard");
+const { OnboardingWizard: Wizard } = await import("./OnboardingWizard");
+import { TooltipProvider } from "./ui/tooltip";
+const OnboardingWizard = () => <TooltipProvider><Wizard /></TooltipProvider>;
 
 /** The agent step renders this input; the org-name step ("other") does not. */
 function currentStep(): "agent" | "closed" | "other" {

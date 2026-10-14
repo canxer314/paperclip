@@ -269,6 +269,14 @@ require instance-admin authority. Other instance settings remain in their existi
 
 ### Claude server configuration permission
 
+First-company setup and legacy onboarding also support saving host configuration
+first. Their shared wizard keeps authentication, model and env drafts when
+switching sources, skips automatic Claude login and blocking model tests under
+host, and offers local checks separately. After saving, it reports local
+verification independently and opens the same Agent for repair without creating
+the old onboarding task. Approval and access rules still apply. See
+[onboarding setup](claude-local-checks.md#first-company-and-legacy-onboarding).
+
 Independent New Agent setup supports saving Claude host configuration before
 permission or the local environment is ready. Both UI layouts use the same flow.
 It requires no managed connection or model test. The confirmation separates
