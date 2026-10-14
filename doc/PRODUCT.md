@@ -269,6 +269,15 @@ require instance-admin authority. Other instance settings remain in their existi
 
 ### Claude server configuration permission
 
+Configuration history restores the entire selected revision, including source
+and the shared model, and records each successful rollback. Current permissions,
+approval restrictions and target checks still apply. Rollback restores no host
+permission, native credentials or check success; latest secrets resolve dynamically,
+and revisions with redacted values remain non-restorable. An unavailable managed
+binding fails closed when returning to Paperclip. Stop and wait before rollback;
+running tasks are not stopped automatically. See
+[configuration rollback](claude-local-checks.md#rolling-back-a-configuration).
+
 First-company setup and legacy onboarding also support saving host configuration
 first. Their shared wizard keeps authentication, model and env drafts when
 switching sources, skips automatic Claude login and blocking model tests under

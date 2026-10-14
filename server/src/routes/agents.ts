@@ -4160,11 +4160,30 @@ export function agentRoutes(
       rollbackAdapterType,
       true,
     );
+    assertClaudeConfigurationTarget(rollbackAdapterType, rollbackAdapterConfig);
     assertExternalInstructionsAdmin(req, existing);
     assertExternalInstructionsAdmin(req, {
       ...existing,
       adapterConfig: rollbackAdapterConfig,
     });
+    await assertAgentDefaultEnvironmentSelection(existing.companyId,
+      typeof rollbackConfig.defaultEnvironmentId === "string" ? rollbackConfig.defaultEnvironmentId : null, {
+        allowedDrivers: allowedEnvironmentDriversForAgent(rollbackAdapterType, rollbackAdapterConfig),
+        allowedSandboxProviders: allowedSandboxProvidersForAgent(rollbackAdapterType),
+      });
+    const rollbackAiBinding = aiRuntimeConnectionBindingSchema.safeParse(asRecord(rollbackConfig.runtimeConfig)?.aiConnection).data;
+    const savedAiBinding = aiRuntimeConnectionBindingSchema.safeParse(existing.runtimeConfig.aiConnection).data;
+    const rollbackHostSource = rollbackAdapterType === "claude_local" && resolveClaudeConfigurationSource(rollbackAdapterConfig) === "host";
+    const savedHostSource = existing.adapterType === "claude_local" && resolveClaudeConfigurationSource(existing.adapterConfig) === "host";
+    const bindingChanged = JSON.stringify(rollbackAiBinding) !== JSON.stringify(savedAiBinding);
+    if (rollbackAiBinding && rollbackHostSource && bindingChanged) {
+      await assertInactiveAiBindingAccess(req, existing.companyId, existing.id, rollbackAiBinding);
+    }
+    if (rollbackAiBinding && !rollbackHostSource && (bindingChanged || savedHostSource || rollbackAdapterType !== existing.adapterType)) {
+      // Reuse current connection admission without probing credentials or sending model input.
+      await validateManagedAgentBinding(req, existing.companyId, existing.id, rollbackAdapterType, rollbackAdapterConfig,
+        rollbackAiBinding, typeof rollbackConfig.defaultEnvironmentId === "string" ? rollbackConfig.defaultEnvironmentId : null, false);
+    }
     if (
       rollbackAdapterType !== existing.adapterType ||
       rollbackAdapterType === "paperclip_runner"
