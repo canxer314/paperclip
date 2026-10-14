@@ -48,6 +48,7 @@ feedback-export-*
 diagnostics/
 
 # Editor / tool temp files
+/.codegraph/
 *.tmp
 .vscode/
 .claude/settings.local.json
