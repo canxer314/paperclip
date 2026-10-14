@@ -31,4 +31,14 @@ describe("run cost policy notice", () => {
       costUsdExact: "0.001", costStatus: "estimated", pricingProvenance: { source: "rate_card" } }} result={null} />);
     expect(html).not.toContain("CLI cost reference");
   });
+  it.each([
+    { costStatus: "unpriced", pricingProvenance: { source: "unknown" } },
+    { pricingProvenance: { source: "rate_card" } },
+  ])("does not label a partial or legacy estimate as a CLI reference: %j", (pricing) => {
+    const usage = { costPolicy: "host_external_untracked_v1", costUsd: 0.001, ...pricing };
+    expect(renderToStaticMarkup(<RunCostPolicyNotice usage={usage} result={null} />))
+      .not.toContain("CLI cost reference");
+    const html = renderToStaticMarkup(<RunCostPolicyNotice usage={usage} result={{ total_cost_usd: 1.25 }} />);
+    expect(html).toContain("$1.2500");
+  });
 });
