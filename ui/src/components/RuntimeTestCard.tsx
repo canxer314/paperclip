@@ -46,6 +46,14 @@ const prerequisiteCopy = {
   fail: { title: "Prerequisite check failed", description: "Review the setup details and retry.", action: "Retry check" },
 } as const;
 
+const localCheckCopy = {
+  idle: { title: "Check local conditions", description: "Check company permission, the local CLI and working directory. This sends no model prompt and does not prove authentication.", action: "Check local conditions" },
+  running: { title: "Checking local conditions", description: "Checking local startup conditions without a model request…", action: "Checking…" },
+  pass: { title: "Local conditions passed", description: "Review the limited local proof below. Authentication and model availability remain untested.", action: "Check again" },
+  warn: { title: "Local conditions need attention", description: "Review the local proof below. Unknown necessary conditions cannot make an Agent ready; configuration can still be saved.", action: "Check again" },
+  fail: { title: "Local check failed", description: "Configuration can still be saved. Repair permission or the local environment before running the Agent.", action: "Retry check" },
+} as const;
+
 export function RuntimeTestCard({
   state,
   result,
@@ -59,9 +67,9 @@ export function RuntimeTestCard({
   error?: string | null;
   onTest: () => void;
   disabled?: boolean;
-  variant?: "connection" | "prerequisites";
+  variant?: "connection" | "prerequisites" | "local-check";
 }) {
-  const content = (variant === "prerequisites" ? prerequisiteCopy : copy)[state];
+  const content = (variant === "local-check" ? localCheckCopy : variant === "prerequisites" ? prerequisiteCopy : copy)[state];
   const Icon =
     state === "running"
       ? Loader2

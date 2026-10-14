@@ -1,5 +1,35 @@
 # Claude Code local checks
 
+## Creating an Agent from New Agent
+
+The independent New Agent dialog opens the same setup page in both UI layouts.
+Claude Code starts with the Paperclip source. Choose Server Claude Code
+configuration to save without creating an AI connection or sending a model
+prompt. Switching sources keeps the shared model, unfinished authentication
+inputs and env edits as drafts. Cancel leaves without saving.
+
+Host model suggestions use the same static catalog as the existing Agent editor.
+Native default leaves Paperclip's model selection unset. Manual IDs remain valid
+configuration values; the suggestions do not prove backend availability. Agent
+env remains editable. The server means Paperclip's execution host and service
+user, and env or advanced arguments can override native configuration.
+
+Check local conditions is optional before saving. Permission denial, a permission
+query error, a missing CLI, cwd failure or an unverified executable does not
+disable Finish setup. The existing create API still checks field validity,
+actor/company access, approval policy and supported targets. An explicit remote
+or ACP target is not made valid by choosing host.
+
+After creation, the confirmation distinguishes a saved record from readiness.
+It refreshes the existing lifecycle state while preparation or local verification
+is pending. A verification failure preserves the record and opens that same
+Agent for repair; refreshing the setup URL does not create another Agent.
+The existing automatic verification and retries use local checks only, retain
+normal directory preparation, and require a passing proof of necessary local
+conditions. No model test or managed hello is needed. A local pass does not prove
+native authentication or model availability. Permission and environment repairs
+continue through the existing lifecycle, without a separate recovery wizard.
+
 ## Editing an existing Agent
 
 In the Claude Code settings, Configuration source edits a draft. Save explicitly
@@ -125,8 +155,9 @@ or an unknown necessary condition cannot make a new Agent ready. Check failures
 do not deactivate an already ready Agent or delete a new Agent's record.
 
 Local checks are the slice of issue #24 implemented in #27; existing-Agent
-source editing and login boundaries are implemented in #28. Isolated host
+source editing and login boundaries are implemented in #28. The independent
+New Agent flow is implemented in #29. Isolated host
 model testing is implemented separately; until available, explicit `model-test`
 returns `unsupported` without inference. Formal host task execution, creation
-controllers, billing, and integrated release qualification remain separate work.
+onboarding controllers, billing, and integrated release qualification remain separate work.
 This slice adds no Telemetry events, Observability spans, or run-log rows.

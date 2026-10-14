@@ -4,7 +4,8 @@ Reviewed against the adapter builders, runtime probes, and provider documentatio
 
 | Adapter | Setup connection/prerequisites | Model and effort in setup |
 | --- | --- | --- |
-| Claude Code / Codex | Existing subscription/API connection step | Searchable model; supported effort options |
+| Claude Code | Paperclip uses the existing subscription/API step. Host saves without a connection or model test; optional local check and automatic verification do not request a model. | Shared searchable model; host static suggestions/manual IDs/native default; supported effort options |
+| Codex | Existing subscription/API connection step | Searchable model; supported effort options |
 | Paperclip Runner | The selected Codex, Claude ACPX, or OpenCode connection | Provider model; no generic effort setting |
 | Cursor CLI | `CURSOR_API_KEY`, existing organization secret, or host `agent login` | Model; no generic effort (Cursor uses modes) |
 | Cursor Cloud | Enter a new `CURSOR_API_KEY` and repository URL; optional starting branch/ref. The key is saved as a new organization secret; setup does not reuse existing keys. | Account-default model; no generic effort |
@@ -16,6 +17,9 @@ Reviewed against the adapter builders, runtime probes, and provider documentatio
 | OpenCode / Pi | Provider/model ID and optional provider key/organization secret | Model; Pi thinking levels; OpenCode-specific variants remain in full configuration |
 
 ## Contracts and regression coverage
+
+- Host Claude configuration saves despite permission denial/query errors or failed local checks. Creation confirmation follows the saved Agent's lifecycle state and retains the same ID for repair and refresh. Configuration validity, actor/company permissions and target restrictions still apply.
+- `ui/src/pages/NewAgent.test.tsx` covers source/auth/model/env drafts, local-only checks and same-record confirmation/navigation. `ui/src/App.new-agent-routing.test.tsx` covers the actual shared route in both UI layouts and refresh without another hire. Creation HTTP tests are in `server/src/__tests__/agent-adapter-validation-routes.test.ts`.
 
 - Cursor Cloud sends `repoUrl` and `repoStartingRef`, matching its SDK adapter. It never sends the old, ignored `repository`/`branch` properties.
 - New runtime keys are stored as distinct organization secrets when setup completes. They do not rotate existing keys. Existing Claude/Codex connection flows retain their user-specific credential behavior.
