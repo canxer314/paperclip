@@ -269,6 +269,15 @@ require instance-admin authority. Other instance settings remain in their existi
 
 ### Claude server configuration permission
 
+Existing Claude Code Agents can edit their configuration source as a draft,
+retain the shared model and existing settings, and explicitly save. Host model
+suggestions are static and allow aliases, concrete IDs and manual values.
+Permission errors do not prevent a legal save. The source summary describes the
+saved choice without claiming an account is connected. Stop and wait before
+switching; saving does not stop runs or add background verification. Login
+requires both saved and draft source to be Paperclip. See
+[editing an existing Agent](claude-local-checks.md#editing-an-existing-agent).
+
 Claude server configuration has a separate local startup check. It confirms
 current company permission, the local CLI, required task capabilities, and cwd
 without asking a model or proving authentication. New host-source Agents use

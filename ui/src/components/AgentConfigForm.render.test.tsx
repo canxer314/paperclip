@@ -52,6 +52,12 @@ const mockClipboard = vi.hoisted(() => ({
   copyTextToClipboard: vi.fn(),
 }));
 
+const mockAccessApi = vi.hoisted(() => ({
+  getClaudeHostAccess: vi.fn(async () => ({ enabled: false })),
+}));
+
+vi.mock("../api/access", () => ({ accessApi: mockAccessApi }));
+
 const mockEnvironmentsApi = vi.hoisted(() => ({
   list: vi.fn(),
   capabilities: vi.fn(),
@@ -615,6 +621,16 @@ async function selectEnvironment(container: HTMLElement, environmentId: string) 
   await flushReact();
 }
 
+async function selectClaudeSource(container: HTMLElement, value: string) {
+  const select = container.querySelector<HTMLSelectElement>('select[aria-label="Configuration source"]');
+  expect(select).not.toBeNull();
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!.call(select, value);
+    select!.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await flushReact();
+}
+
 async function clickByText(container: HTMLElement, label: string) {
   const button = findButton(container, label);
   await act(async () => {
@@ -654,6 +670,116 @@ async function flushUntil(check: () => boolean, timeoutMs = 4000) {
 
 describe("AgentConfigForm environment selector", () => {
   let roots: Root[] = [];
+
+  it("switches Claude source only in the draft and saves the shared model and unrelated configuration", async () => {
+    const original = {
+      engine: "cli", model: "gateway/custom-model", effort: "high",
+      env: { ANTHROPIC_API_KEY: { type: "plain", value: "draft-key" } },
+      extraArgs: ["--custom"], instructionsFilePath: "/workspace/AGENTS.md",
+      skillKeys: ["company:review"], tools: { mcp: "keep" },
+    };
+    const result = await renderForm([], { adapterType: "claude_local", adapterConfig: original });
+    roots.push(result.root);
+    const source = result.container.querySelector<HTMLSelectElement>('select[aria-label="Configuration source"]');
+    expect(source).not.toBeNull();
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!;
+      setter.call(source, "host");
+      source!.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await flushReact();
+    expect(result.onSave).not.toHaveBeenCalled();
+    expect(result.container.textContent).toContain("Saved configuration source: Paperclip");
+    expect(result.container.textContent).toContain("Save does not stop current runs");
+    await clickByText(result.container, "Save");
+    expect(result.onSave).toHaveBeenCalledWith(expect.objectContaining({
+      adapterConfig: { ...original, configurationSource: "host" }, replaceAdapterConfig: true,
+    }));
+  });
+
+  it("offers static host models and manual IDs without provider discovery or inactive connection requests", async () => {
+    const accounts = vi.spyOn(aiConnectionsApi, "list").mockResolvedValue({ currentUserId: "you", canManageConnections: true, connections: [] });
+    try {
+      const result = await renderForm([], {
+        adapterType: "claude_local", adapterConfig: { configurationSource: "host", engine: "cli", model: "gateway/custom" },
+        runtimeConfig: { aiConnection: { mode: "responsible_user", provider: "openrouter", method: "api_key" } },
+      });
+      roots.push(result.root);
+      expect(mockAgentsApi.adapterModels).not.toHaveBeenCalled();
+      expect(mockAgentsApi.detectModel).not.toHaveBeenCalled();
+      expect(accounts).not.toHaveBeenCalled();
+      await clickByText(result.container, "gateway/custom");
+      expect(document.body.textContent).toContain("Claude Opus 5.5");
+      expect(document.body.textContent).toContain("opus");
+      expect(document.body.textContent).not.toContain("Refresh models");
+      expect(document.body.textContent).not.toContain("Detect model");
+      const search = document.querySelector<HTMLInputElement>('input[placeholder="Search models... (type to create)"]')!;
+      await act(async () => setInputValue(search, "private/gateway-model"));
+      const manual = [...document.querySelectorAll("button")].find(button => button.textContent?.includes("Use manual model"));
+      expect(manual).toBeTruthy();
+      await clickElement(manual);
+      await clickByText(result.container, "Save");
+      expect(result.onSave).toHaveBeenCalledWith(expect.objectContaining({ adapterConfig: expect.objectContaining({ model: "private/gateway-model" }) }));
+      expect(mockAgentsApi.adapterModels).not.toHaveBeenCalled();
+    } finally { accounts.mockRestore(); }
+  });
+
+  it.each(["allowed", "denied", "error"])("shows %s host permission without blocking draft env edits or saving", async state => {
+    if (state === "error") mockAccessApi.getClaudeHostAccess.mockRejectedValueOnce(new Error("permission service unavailable"));
+    else mockAccessApi.getClaudeHostAccess.mockResolvedValueOnce({ enabled: state === "allowed" });
+    const result = await renderForm([], { adapterType: "claude_local", adapterConfig: { configurationSource: "host", engine: "cli" } },
+      { environmentVariablesPlacement: "configuration" });
+    roots.push(result.root);
+    await flushUntil(() => mockAccessApi.getClaudeHostAccess.mock.calls.length > 0);
+    expect(result.container.textContent).toContain(state === "error" ? "Could not load company permission" :
+      state === "allowed" ? "Company permission: allowed" : "Company permission: not granted");
+    await clickByText(result.container, "Add variable");
+    await act(async () => {
+      setInputValue(result.container.querySelector<HTMLInputElement>('input[aria-label="Variable name"]')!, "CUSTOM_ENV");
+      setInputValue(result.container.querySelector<HTMLInputElement>('input[aria-label="Variable value"]')!, "keep");
+    });
+    await clickByText(result.container, "Save");
+    expect(result.onSave).toHaveBeenCalledWith(expect.objectContaining({ adapterConfig: expect.objectContaining({
+      configurationSource: "host", env: { CUSTOM_ENV: { type: "plain", value: "keep" } },
+    }) }));
+    expect(result.container.textContent).not.toContain("Grant permission");
+  });
+
+  it("keeps pending auth env input and the shared model when switching back, and lets host select native default", async () => {
+    const result = await renderForm([], { adapterType: "claude_local", adapterConfig: { engine: "cli", model: "gateway/custom" } });
+    roots.push(result.root);
+    await clickByText(result.container, "Add variable");
+    await act(async () => {
+      setInputValue(result.container.querySelector<HTMLInputElement>('input[aria-label="Variable name"]')!, "ANTHROPIC_API_KEY");
+      setInputValue(result.container.querySelector<HTMLInputElement>('input[aria-label="Variable value"]')!, "unsaved-auth");
+    });
+    await selectClaudeSource(result.container, "host");
+    await selectClaudeSource(result.container, "paperclip");
+    expect(result.onSave).not.toHaveBeenCalled();
+    expect(result.container.textContent).toContain("gateway/custom");
+    expect(result.container.querySelector<HTMLInputElement>('input[aria-label="Variable value"]')!.value).toBe("unsaved-auth");
+    await selectClaudeSource(result.container, "host");
+    await clickByText(result.container, "gateway/custom");
+    await clickByText(document.body, "Default");
+    expect(result.container.textContent).toContain("Native default");
+    await selectClaudeSource(result.container, "paperclip");
+    expect(result.container.textContent).toContain("Default (claude-opus-5)");
+    await clickByText(result.container, "Save");
+    const patch = result.onSave.mock.calls[0][0];
+    expect(patch.adapterConfig.model).toBeUndefined();
+    expect(patch.adapterConfig.env.ANTHROPIC_API_KEY).toEqual({ type: "plain", value: "unsaved-auth" });
+    expect(patch.adapterConfig.configurationSource).toBe("paperclip");
+  });
+
+  it("describes an unset host engine as CLI and retains the Paperclip default when switching back", async () => {
+    const result = await renderForm([], { adapterType: "claude_local", adapterConfig: { configurationSource: "host" } });
+    roots.push(result.root);
+    expect(result.container.textContent).toContain("Default (CLI)");
+    await selectClaudeSource(result.container, "paperclip");
+    expect(result.container.textContent).toContain("Default (ACP)");
+    await clickByText(result.container, "Save");
+    expect(result.onSave.mock.calls[0][0].adapterConfig.engine).toBeUndefined();
+  });
 
   beforeEach(() => {
     mockAgentsApi.adapterModels.mockResolvedValue([]);
@@ -3727,6 +3853,19 @@ describe("AgentConfigForm edit-mode Claude OAuth binding", () => {
     vi.clearAllMocks();
   });
 
+  it.each([["host", "host"], ["host", "paperclip"], ["paperclip", "host"]])(
+    "requires explicit source handling before login with saved %s and draft %s",
+    async (saved, draft) => {
+      const result = await renderEditClaudeSandbox({ adapterConfig: { configurationSource: saved, engine: "cli" } });
+      roots.push(result.root);
+      await selectClaudeSource(result.container, draft);
+      await runTest(result.container);
+      expect(findButton(result.container, "Sign in")).toBeUndefined();
+      expect(result.onSave).not.toHaveBeenCalled();
+      if (saved !== draft) expect(result.container.textContent).toContain("Save the source switch before using Paperclip login");
+    },
+  );
+
   it("adds the fixed CLAUDE_CODE_OAUTH_TOKEN binding to the agent and persists it", async () => {
     const result = await renderEditClaudeSandbox();
     roots.push(result.root);
@@ -3751,6 +3890,37 @@ describe("AgentConfigForm edit-mode Claude OAuth binding", () => {
     // or the server rejects the patch with the fixed claim error even though the
     // login already stored the token. Regression coverage for that gap.
     expect(patch.applyStoredClaudeLogin).toBe(true);
+  });
+
+  it("applies an existing stored login when both sources remain Paperclip", async () => {
+    mockAgentsApi.getClaudeOAuthTokenStatus.mockResolvedValue({ secretId: "stored-secret", latestVersion: 1 });
+    const result = await renderEditClaudeSandbox();
+    roots.push(result.root);
+    await runTest(result.container);
+    await flushUntil(() => Boolean(findButton(result.container, "Use saved login")));
+    expect(findButton(result.container, "Use saved login")).toBeTruthy();
+    await clickByText(result.container, "Use saved login");
+    expect(result.onSave).toHaveBeenCalledWith(expect.objectContaining({
+      applyStoredClaudeLogin: true,
+      adapterConfig: expect.objectContaining({ env: { CLAUDE_CODE_OAUTH_TOKEN: FIXED_CLAUDE_OAUTH_BINDING } }),
+    }));
+  });
+
+  it("does not save a host draft when an earlier login completion arrives", async () => {
+    let finish!: (value: { storedSessionId: string }) => void;
+    mockAgentsApi.completeClaudeSetupTokenLogin.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const result = await renderEditClaudeSandbox();
+    roots.push(result.root);
+    await runTest(result.container);
+    await startLogin(result.container);
+    await flushUntil(() => Boolean(finish));
+    expect(finish).toBeTruthy();
+    await selectClaudeSource(result.container, "host");
+    await act(async () => { finish({ storedSessionId: "late-session" }); });
+    await flushReact();
+    expect(result.onSave).not.toHaveBeenCalled();
+    expect(result.container.querySelector<HTMLSelectElement>('select[aria-label="Configuration source"]')!.value).toBe("host");
+    expect(result.container.textContent).toContain("Saved configuration source: Paperclip");
   });
 
   it("keeps every unrelated existing binding when it adds the fixed binding", async () => {

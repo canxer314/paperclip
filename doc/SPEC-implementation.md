@@ -2126,6 +2126,21 @@ Companies may configure an optional shared API connection and model for short ac
 
 ## Claude host permission administration
 
+Existing Claude Code settings expose a draft-only configuration source choice
+and one shared model. Host uses shipped static candidates with manual values,
+without provider refresh or metadata discovery. Authentication fields remain
+stored for switching back, env stays editable, and source saves preserve
+instructions, skills, tools and history. Legal saves do not require current host
+permission, CLI/cwd availability or proven sandbox compatibility. Existing actor,
+company, approval and supported-target checks remain.
+
+The saved-source summary is independent of authentication or check results.
+Stopping and waiting before switching is a static recommendation; saves do not
+stop runs, clear queues or reverify ready Agents. Old login is only available
+when saved and draft sources are both Paperclip; the saved-host login API and
+stored-login updates involving host reject before credential use. See
+[Claude local checks](claude-local-checks.md#editing-an-existing-agent).
+
 The Claude host-source environment test defaults to `local-check`. It branches
 before inactive managed/router authentication, resolves active env references,
 and rechecks current company permission before adapter dispatch. Version/help
