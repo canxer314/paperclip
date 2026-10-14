@@ -1,3 +1,4 @@
+import { assertClaudeConfigurationTarget } from "../lib/claude-configuration.js";
 import { createAgentLifecycle } from "./agent-lifecycle.js";
 import { agentAppearanceSchema } from "@paperclipai/shared";
 import { createHash, randomUUID } from "node:crypto";
@@ -14,6 +15,7 @@ import {
 } from "@paperclipai/db";
 import type {
   CompanyPortabilityAgentManifestEntry,
+  CompanyPortabilityAdapterOverride,
   CompanyPortabilityBlobManifestEntry,
   CompanyPortabilityEmbeddedAssetManifestEntry,
   CompanyPortabilityCollisionStrategy,
@@ -48,6 +50,8 @@ import type {
 } from "@paperclipai/shared";
 import {
   AGENT_DEFAULT_MAX_CONCURRENT_RUNS,
+  CLAUDE_HOST_IMPORT_NOTICE,
+  resolveClaudeConfigurationSource,
   ISSUE_PRIORITIES,
   ISSUE_STATUSES,
   PROJECT_ICON_NAMES,
@@ -1199,6 +1203,22 @@ function appendCodexImportArg(adapterConfig: Record<string, unknown>, arg: strin
 
   if (legacyArgs?.includes(arg)) return;
   adapterConfig.extraArgs = [arg];
+}
+
+function resolveImportedAgentAdapter(
+  agent: CompanyPortabilityAgentManifestEntry,
+  override?: CompanyPortabilityAdapterOverride,
+) {
+  const adapterType = override?.adapterType ?? agent.adapterType;
+  const adapterConfig = { ...(override?.adapterConfig ?? agent.adapterConfig) };
+  if (agent.adapterType === "claude_local" && adapterType === "claude_local"
+    && adapterConfig.configurationSource === undefined && agent.adapterConfig.configurationSource !== undefined) {
+    adapterConfig.configurationSource = agent.adapterConfig.configurationSource;
+  }
+  if (!override?.adapterConfig && agent.adapterType === "claude_local" && adapterType !== "claude_local") {
+    delete adapterConfig.configurationSource;
+  }
+  return { adapterType, adapterConfig };
 }
 
 function applyImportAdapterRunDefaults(
@@ -5161,6 +5181,12 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
       }
     }
 
+    if (selectedAgents.some(agent => agent.adapterType === "claude_local"
+      && agent.adapterConfig.configurationSource === "host"
+      && agentPlans.find(plan => plan.slug === agent.slug)?.action !== "skip")) {
+      warnings.push(CLAUDE_HOST_IMPORT_NOTICE);
+    }
+
     // Warn about agents that will be overwritten/updated
     for (const ap of agentPlans) {
       if (ap.action === "update") {
@@ -5254,6 +5280,19 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
     }
 
     const sourceManifest = plan.source.manifest;
+    const importedAgents = plan.selectedAgents.filter(agent =>
+      plan.preview.plan.agentPlans.some(entry => entry.slug === agent.slug && entry.action !== "skip"),
+    );
+    const importedAdapters = importedAgents.map(agent => resolveImportedAgentAdapter(agent, input.adapterOverrides?.[agent.slug]));
+    for (const adapter of importedAdapters) {
+      assertClaudeConfigurationTarget(adapter.adapterType, adapter.adapterConfig);
+    }
+    const hostImport = importedAdapters.some(adapter =>
+      adapter.adapterType === "claude_local" && resolveClaudeConfigurationSource(adapter.adapterConfig) === "host",
+    );
+    if (hostImport && input.hostConfigurationConfirmed !== true) {
+      throw unprocessable(CLAUDE_HOST_IMPORT_NOTICE, { code: "claude_host_import_confirmation_required" });
+    }
     const pauseAutomations = options?.pauseAutomations === true;
     const importedAutomationPausedAt = pauseAutomations ? new Date() : null;
     const warnings = [...plan.preview.warnings];
@@ -5602,17 +5641,13 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
             }
           }
 
-          // Apply adapter overrides from request if present
-          const adapterOverride = input.adapterOverrides?.[planAgent.slug];
-          const baseAdapterConfig = adapterOverride?.adapterConfig
-            ? { ...adapterOverride.adapterConfig }
-            : { ...manifestAgent.adapterConfig } as Record<string, unknown>;
+          const importedAdapter = resolveImportedAgentAdapter(manifestAgent, input.adapterOverrides?.[planAgent.slug]);
 
           const desiredSkills = (manifestAgent.skills ?? []).map((skillRef) => desiredSkillRefMap.get(skillRef) ?? skillRef);
           const normalizedAdapter = await prepareImportedAgentAdapter(
             targetCompany.id,
-            adapterOverride?.adapterType ?? manifestAgent.adapterType,
-            baseAdapterConfig,
+            importedAdapter.adapterType,
+            importedAdapter.adapterConfig,
             desiredSkills,
             mode,
           );

@@ -67,6 +67,21 @@ describe("company CLI commands", () => {
   let logSpy: ReturnType<typeof vi.spyOn>;
   let errorSpy: ReturnType<typeof vi.spyOn>;
 
+  it("acknowledges the target host once with --yes and carries it to import apply", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({
+      include: { agents: true }, selectedAgentSlugs: ["claude"],
+      plan: { agentPlans: [{ slug: "claude", action: "create" }] },
+      manifest: { agents: [{ slug: "claude", adapterType: "claude_local", adapterConfig: { configurationSource: "host" } }] },
+      errors: [], warnings: [],
+    })).mockResolvedValueOnce(jsonResponse({ company: { id: COMPANY_ID }, agents: [] }));
+    await runCommand(["company", "import", "https://github.com/acme/company", "--target", "new", "--yes", "--json",
+      "--api-base", "http://paperclip.test", "--api-key", "board-token"]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const payload = JSON.parse(String(fetchMock.mock.calls[1]![1].body));
+    expect(payload.hostConfigurationConfirmed).toBe(true);
+    expect(payload.adapterOverrides).toBeUndefined();
+  });
+
   beforeEach(() => {
     process.env = { ...ORIGINAL_ENV };
     delete process.env.PAPERCLIP_API_URL;

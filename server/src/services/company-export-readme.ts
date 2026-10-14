@@ -1,7 +1,7 @@
 /**
  * Generates README.md with Mermaid org chart for company exports.
  */
-import type { CompanyPortabilityManifest } from "@paperclipai/shared";
+import { CLAUDE_HOST_IMPORT_NOTICE, type CompanyPortabilityManifest } from "@paperclipai/shared";
 
 const ROLE_LABELS: Record<string, string> = {
   ceo: "CEO",
@@ -160,6 +160,10 @@ export function generateReadme(
   lines.push("npx paperclipai company import this-github-url-or-folder");
   lines.push("```");
   lines.push("");
+  if (manifest.agents.some(agent => agent.adapterType === "claude_local" && agent.adapterConfig.configurationSource === "host")) {
+    lines.push(CLAUDE_HOST_IMPORT_NOTICE);
+    lines.push("");
+  }
   lines.push("See [Paperclip](https://paperclip.ing) for more information.");
   lines.push("");
 

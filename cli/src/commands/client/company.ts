@@ -13,6 +13,7 @@ import type {
   CompanyPortabilityPreviewResult,
   CompanyPortabilityImportResult,
 } from "@paperclipai/shared";
+import { CLAUDE_HOST_IMPORT_NOTICE, resolveClaudeConfigurationSource } from "@paperclipai/shared";
 import {
   buildAlreadyImportedMessage,
   companyImportTransferApplyPath,
@@ -1652,7 +1653,7 @@ export function registerCompanyCommands(program: Command): void {
       .option("--collision <mode>", "Collision strategy: rename | skip | replace", "rename")
       .option("--ref <value>", "Git ref to use for GitHub imports (branch, tag, or commit)")
       .option("--paperclip-url <url>", "Alias for --api-base on this command")
-      .option("--yes", "Accept default selection and skip the pre-import confirmation prompt", false)
+      .option("--yes", "Accept default selection and import confirmation, including target host/runtime-user configuration without transferring native credentials or host permission", false)
       .option("--dry-run", "Run preview only without applying", false)
       .action(async (fromPathOrUrl: string, opts: CompanyImportOptions) => {
         try {
@@ -1799,6 +1800,13 @@ export function registerCompanyCommands(program: Command): void {
           }
           const adapterOverrides = buildDefaultImportAdapterOverrides(preview);
           const adapterMessages = buildDefaultImportAdapterMessages(adapterOverrides);
+          const hostImport = preview.manifest.agents.some(agent => {
+            if (!preview.plan.agentPlans.some(plan => plan.slug === agent.slug && plan.action !== "skip")) return false;
+            const override = adapterOverrides?.[agent.slug];
+            return (override?.adapterType ?? agent.adapterType) === "claude_local"
+              && resolveClaudeConfigurationSource(agent.adapterConfig ?? {}) === "host";
+          });
+          if (hostImport) adapterMessages.push(CLAUDE_HOST_IMPORT_NOTICE);
 
           if (opts.dryRun) {
             if (ctx.json) {
@@ -1836,7 +1844,7 @@ export function registerCompanyCommands(program: Command): void {
           });
           if (confirmationMode === "prompt") {
             const confirmed = await p.confirm({
-              message: "Apply this import? (y/N)",
+              message: hostImport ? `${CLAUDE_HOST_IMPORT_NOTICE} Apply this import? (y/N)` : "Apply this import? (y/N)",
               initialValue: false,
             });
             if (p.isCancel(confirmed) || !confirmed) {
@@ -1853,11 +1861,12 @@ export function registerCompanyCommands(program: Command): void {
           const imported = transferId
             ? await ctx.api.post<CompanyPortabilityImportResult>(
                 `/api/companies${companyImportTransferApplyPath(transferId)}`,
-                { ...transferMeta, selectedFiles, adapterOverrides },
+                { ...transferMeta, selectedFiles, adapterOverrides, ...(hostImport ? { hostConfigurationConfirmed: true } : {}) },
               )
             : await ctx.api.post<CompanyPortabilityImportResult>(importApiPath, {
                 ...previewPayload,
                 adapterOverrides,
+                ...(hostImport ? { hostConfigurationConfirmed: true } : {}),
               });
           if (!imported) {
             throw new Error("Import request returned no data.");

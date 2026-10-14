@@ -1,3 +1,4 @@
+import { assertClaudeConfigurationTarget } from "../lib/claude-configuration.js";
 import { cancellationRequestId } from "../services/native-runtime/native-cancellation-request.js";
 import { agentEnvironmentTestService } from "../services/agent-environment-test.js";
 import { assertClaudeHostAccess } from "../services/claude-host-access.js";
@@ -2342,15 +2343,6 @@ export function agentRoutes(
     }
   }
 
-  function assertClaudeConfigurationTarget(adapterType: string | null | undefined, adapterConfig: Record<string, unknown>) {
-    if (adapterConfig.configurationSource !== undefined && adapterType !== "claude_local") {
-      throw unprocessable("Configuration source is only supported by the Claude Code adapter.");
-    }
-    if (adapterType === "claude_local" && resolveClaudeConfigurationSource(adapterConfig) === "host" &&
-      adapterConfig.engine !== undefined && adapterConfig.engine !== "cli") {
-      throw unprocessable("Claude server configuration requires the CLI engine.", { code: "claude_host_target_unsupported" });
-    }
-  }
 
   function resolveInstructionsFilePath(candidatePath: string, adapterConfig: Record<string, unknown>) {
     const trimmed = candidatePath.trim();

@@ -142,6 +142,33 @@ mechanism. Existing model, cwd, bundle fingerprint and fresh-session behavior
 continues. Running processes and queued work do not switch atomically, and an old
 run can still write session state through the existing completion path.
 
+## Copying and company packages
+
+Duplicate Agent keeps the saved Claude configuration source and shared model.
+The copy uses the company's current host permission. Revoking that permission
+also applies to the copy. Copying adds no host confirmation or model test.
+
+Company export keeps the source in `.paperclip.yaml`. Missing source fields in
+old packages mean Paperclip. Export does not read or include native Claude
+credentials or the company host permission. Existing explicit env secret export
+and import rules still apply; this feature does not include additional secrets.
+
+When importing host-source Agents, confirm the target execution environment once
+for the whole batch. It uses the target Paperclip execution host and the
+configuration visible to its runtime user, not the source host or browser computer.
+The UI has one batch checkbox. CLI import includes the same explanation in its
+existing confirmation; `--yes` accepts it, including in JSON or unattended use.
+The raw API uses `hostConfigurationConfirmed: true`. This acknowledgement is
+required only when the final import creates or replaces a host-source Agent.
+Skipped Agents require no acknowledgement.
+
+Confirmation grants no permission. An import can save Agents without target host
+permission; checks, tests and runs still require current permission. A company
+package cannot grant, revoke or overwrite the target permission. Import does not
+add wakeups, runs, active model tests or a new forced pause. The existing optional
+pause choice and lifecycle stay in place. Any existing automatic host verification
+uses local checks only. A local pass is not native authentication or model proof.
+
 ## Local check API
 
 The existing `POST /api/companies/:companyId/adapters/claude_local/test-environment`
