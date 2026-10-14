@@ -1,5 +1,7 @@
 import { PrimaryAgentIndicator, SetPrimaryAgentButton } from "@/components/primary-agent/PrimaryAgentPresentation";
 import { AiConnectionPoolRunDetails } from "@/components/ai-connections/AiConnectionPoolRunDetails";
+import { RunCostPolicyNotice } from "../components/RunCostPolicyNotice";
+import { HOST_EXTERNAL_UNTRACKED_COST_POLICY } from "@paperclipai/shared";
 import { AgentConnectionInstructions } from "@/features/connections/ConnectionInstructions";
 import type { AgentInstructionCandidate, AgentInstructionsBundle } from "@paperclipai/shared";
 import { InstructionHistory } from "../components/InstructionHistory";
@@ -3585,7 +3587,8 @@ function RunDetail({ run: initialRun, agentRouteId, adapterType, adapterConfig }
     ? Math.round((new Date(run.finishedAt).getTime() - new Date(run.startedAt).getTime()) / 1000)
     : null;
   const displayDurationSec = durationSec ?? (isRunning ? elapsedSec : null);
-  const hasMetrics = metrics.input > 0 || metrics.output > 0 || metrics.cached > 0 || metrics.cost > 0;
+  const hostCostPolicy = run.usageJson?.costPolicy === HOST_EXTERNAL_UNTRACKED_COST_POLICY;
+  const hasMetrics = hostCostPolicy || metrics.input > 0 || metrics.output > 0 || metrics.cached > 0 || metrics.cost > 0;
   const hasSession = !!(run.sessionIdBefore || run.sessionIdAfter);
   const sessionChanged = run.sessionIdBefore && run.sessionIdAfter && run.sessionIdBefore !== run.sessionIdAfter;
   const sessionId = run.sessionIdAfter || run.sessionIdBefore;
@@ -3839,12 +3842,14 @@ function RunDetail({ run: initialRun, agentRouteId, adapterType, adapterConfig }
                 <div className="text-sm font-medium font-mono">{formatTokens(metrics.cached)}</div>
               </div>
               <div>
-                <div className="text-xs text-muted-foreground">Cost</div>
-                <div className="text-sm font-medium font-mono">{metrics.cost > 0 ? `$${metrics.cost.toFixed(4)}` : "-"}</div>
+                <div className="text-xs text-muted-foreground">{hostCostPolicy ? "Paperclip cost" : "Cost"}</div>
+                <div className="text-sm font-medium font-mono">{hostCostPolicy || metrics.cost > 0 ? `$${metrics.cost.toFixed(4)}` : "-"}</div>
               </div>
             </div>
           )}
         </div>
+
+        <RunCostPolicyNotice usage={run.usageJson} result={run.resultJson} />
 
         {/* Collapsible session row */}
         {hasSession && (

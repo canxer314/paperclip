@@ -1,6 +1,9 @@
 import { z } from "zod";
 import { centsToUnits, normalizeCents } from "./money.js";
 
+/** Persisted on the run; CLI amounts remain references, not external bills. */
+export const HOST_EXTERNAL_UNTRACKED_COST_POLICY = "host_external_untracked_v1";
+
 export const exactCentsSchema = z.union([z.string().max(160), z.number().finite()]).transform((value, ctx) => {
   try {
     if ((typeof value === "number" ? value < 0 : value.startsWith("-")) || centsToUnits(value) < 0n) throw new Error("Money cannot be negative");

@@ -16,6 +16,7 @@ import type { Db } from "@paperclipai/db";
 import {
   type BillingType,
   type CostStatus,
+  HOST_EXTERNAL_UNTRACKED_COST_POLICY,
 } from "@paperclipai/shared";
 import {
   agents,
@@ -72,11 +73,12 @@ const heartbeatRunListColumns = {
   cachedInputTokens: sql<number | null>`(${heartbeatRuns.usageJson} ->> 'cachedInputTokens')::numeric`.as("cachedInputTokens"),
   outputTokens: sql<number | null>`(${heartbeatRuns.usageJson} ->> 'outputTokens')::numeric`.as("outputTokens"),
   totalTokens: sql<number | null>`(${heartbeatRuns.usageJson} ->> 'totalTokens')::numeric`.as("totalTokens"),
-  costUsd: sql<number | null>`coalesce(
+  costUsd: sql<number | null>`case when ${heartbeatRuns.usageJson}->>'costPolicy' = ${HOST_EXTERNAL_UNTRACKED_COST_POLICY}
+    then 0 else coalesce(
     (${heartbeatRuns.resultJson} ->> 'costUsd')::numeric,
     (${heartbeatRuns.resultJson} ->> 'cost_usd')::numeric,
     (${heartbeatRuns.resultJson} ->> 'total_cost_usd')::numeric
-  )`.as("costUsd"),
+  ) end`.as("costUsd"),
   startedAt: heartbeatRuns.startedAt,
   finishedAt: heartbeatRuns.finishedAt,
   error: heartbeatRuns.error,

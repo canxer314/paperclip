@@ -1,6 +1,6 @@
 import { and, eq, sql } from "drizzle-orm";
 import { agents, agentRuntimeState, companies, heartbeatRuns, type Db } from "@paperclipai/db";
-import { normalizeCents, usdToCents, type AccountingFinding, type AccountingHealth, type AccountingInspection } from "@paperclipai/shared";
+import { HOST_EXTERNAL_UNTRACKED_COST_POLICY, normalizeCents, usdToCents, type AccountingFinding, type AccountingHealth, type AccountingInspection } from "@paperclipai/shared";
 import { conflict, notFound } from "../errors.js";
 import { receiptFingerprint } from "./receipt-fingerprint.js";
 import { withAccountingReadSnapshot, withAccountingTransaction } from "./accounting-transaction.js";
@@ -58,7 +58,7 @@ async function inspect(tx: Db, companyId: string): Promise<AccountingInspection>
     const usage = row.usage ?? {};
     const cost = usage.cacheAdjustedCostUsd ?? usage.costUsdExact ?? usage.costUsd ?? 0;
     let cents: string;
-    try { cents = usage.billingType === "subscription_included" ? "0.0000000" : usdToCents(String(cost)); }
+    try { cents = usage.costPolicy === HOST_EXTERNAL_UNTRACKED_COST_POLICY || usage.billingType === "subscription_included" ? "0.0000000" : usdToCents(String(cost)); }
     catch { cents = "invalid receipt"; }
     const expected = { cents, input: String(usage.inputTokens ?? 0), cached: String(usage.cachedInputTokens ?? 0), output: String(usage.outputTokens ?? 0) };
     row.actual.cents = normalizeCents(row.actual.cents);
