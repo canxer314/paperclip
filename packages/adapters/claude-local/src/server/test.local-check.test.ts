@@ -138,6 +138,18 @@ describe("Claude local startup checks", () => {
     expect(runtime.process.mock.calls.map(call => call[3])).toEqual([["--version"]]);
   });
 
+  it("honors an empty model env override instead of reusing the inherited model", async () => {
+    vi.stubEnv("ANTHROPIC_MODEL", "claude-opus-5-5");
+    runtime.process.mockImplementation(async (...args: unknown[]) => ({
+      exitCode: 0, signal: null, timedOut: false, pid: 1, startedAt: "",
+      stdout: JSON.stringify(args[3]) === '["--version"]' ? "2.1.279" : "--print --output-format stream-json --verbose",
+      stderr: "",
+    }));
+    const result = await testEnvironment({ companyId: "company-1", adapterType: "claude_local",
+      config: { configurationSource: "host", env: { ANTHROPIC_MODEL: "" } } });
+    expect(result).toMatchObject({ outcome: "passed", localPrerequisites: "passed" });
+  });
+
   it("does not inject a Paperclip default model or classify absent keys as missing authentication", async () => {
     const result = await testEnvironment({ companyId: "company-1", adapterType: "claude_local", config: { configurationSource: "host" } });
     expect(result.localPrerequisites).toBe("passed");

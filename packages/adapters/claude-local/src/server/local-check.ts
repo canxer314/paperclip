@@ -67,7 +67,8 @@ export async function checkClaudeLocalEnvironment(ctx: AdapterEnvironmentTestCon
     return result("unverifiable");
   }
   checks.push({ code: "claude_cli_version_valid", level: "info", message: `Claude Code ${version} is installed.` });
-  const model = asString(config.model, "").trim() || asString(env.ANTHROPIC_MODEL, "").trim() || process.env.ANTHROPIC_MODEL || "";
+  const runtimeModel = { ...process.env, ...env }.ANTHROPIC_MODEL;
+  const model = asString(config.model, "").trim() || asString(runtimeModel, "").trim();
   const minimumVersion = minimumClaudeCliVersionForModel(model);
   if (minimumVersion && !claudeCliVersionAtLeast(version, minimumVersion)) {
     checks.push({ code: "claude_cli_version_incompatible", level: "error", message: "The installed Claude Code version does not meet the selected model's CLI requirement." });
