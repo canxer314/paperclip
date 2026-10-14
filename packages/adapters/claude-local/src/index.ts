@@ -60,6 +60,7 @@ export const agentConfigurationDoc = `# claude_local agent configuration
 Adapter: claude_local
 
 Core fields:
+- configurationSource (string, optional): "paperclip" or "host"; omitted means "paperclip". Host environment checks use the local CLI and never request a model. This local-check slice does not yet enable formal host task execution.
 - engine (string, optional): defaults to ACP, including legacy unset/"auto" values. Missing prerequisites and execution failures fail the run without changing engines. Set "cli" to explicitly select the CLI engine.
 - cwd (string, optional): default absolute working directory fallback for the agent process (created if missing when possible)
 - instructionsFilePath (string, optional): absolute path to a markdown instructions file injected at runtime

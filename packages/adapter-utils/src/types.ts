@@ -310,12 +310,8 @@ export interface AdapterEnvironmentCheck {
 
 export type AdapterEnvironmentTestStatus = "pass" | "warn" | "fail";
 
-export interface AdapterEnvironmentTestResult {
-  adapterType: string;
-  status: AdapterEnvironmentTestStatus;
-  checks: AdapterEnvironmentCheck[];
-  testedAt: string;
-}
+export type { AdapterEnvironmentTestResult } from "@paperclipai/shared";
+import type { AdapterEnvironmentTestResult, AdapterEnvironmentTestPurpose } from "@paperclipai/shared";
 
 export type AdapterSkillSyncMode = "unsupported" | "persistent" | "ephemeral";
 
@@ -370,6 +366,9 @@ export interface AdapterEnvironmentTestContext {
   companyId: string;
   adapterType: string;
   config: Record<string, unknown>;
+  purpose?: AdapterEnvironmentTestPurpose;
+  /** Internal lifecycle capability. HTTP requests never populate this field. */
+  directoryPreparation?: "create";
   /**
    * Optional execution target the adapter should run probes against.
    *

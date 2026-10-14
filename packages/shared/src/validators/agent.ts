@@ -11,6 +11,7 @@ import { envConfigSchema } from "./secret.js";
 import { trustAuthorizationPolicySchema, trustPresetSchema } from "./trust-policy.js";
 import { agentDesiredSkillSelectionSchema } from "./adapter-skills.js";
 import { objectWithoutDefaults } from "./partial.js";
+import { adapterEnvironmentTestPurposeSchema, claudeConfigurationSourceSchema } from "../claude-configuration.js";
 
 export const agentPermissionsSchema = z.object({
   // No schema default: the server derives the default (enabled unless the
@@ -49,6 +50,9 @@ export const restoreAgentInstructionSchema = z.object({
 export type UpsertAgentInstructionsFile = z.infer<typeof upsertAgentInstructionsFileSchema>;
 
 const adapterConfigSchema = z.record(z.string(), z.unknown()).superRefine((value, ctx) => {
+  if (!claudeConfigurationSourceSchema.safeParse(value.configurationSource).success) {
+    ctx.addIssue({ code: "custom", message: "Invalid Claude configuration source", path: ["configurationSource"] });
+  }
   const envValue = value.env;
   if (envValue === undefined) return;
   const parsed = envConfigSchema.safeParse(envValue);
@@ -256,6 +260,7 @@ export const resetAgentSessionSchema = z.object({
 export type ResetAgentSession = z.infer<typeof resetAgentSessionSchema>;
 
 export const testAdapterEnvironmentSchema = z.object({
+  purpose: adapterEnvironmentTestPurposeSchema.optional(),
   aiConnection: aiConnectionBindingSchema.optional(),
   /** Saved agent whose redacted environment entries are restored for this probe. */
   agentId: z.string().guid().optional(),

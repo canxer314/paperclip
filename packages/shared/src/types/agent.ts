@@ -332,6 +332,12 @@ export interface AdapterEnvironmentTestResult {
   status: AdapterEnvironmentTestStatus;
   checks: AdapterEnvironmentCheck[];
   testedAt: string;
+  purpose?: import("../claude-configuration.js").AdapterEnvironmentTestPurpose;
+  outcome?: "passed" | "failed" | "unverifiable" | "unsupported";
+  localPrerequisites?: "passed" | "failed" | "unverifiable";
+  configurationReproducibility?: "verified" | "unverifiable";
+  modelResponse?: "passed" | "failed" | "not_tested";
+  cwd?: string;
 }
 
 // The cheap tri-state authentication signal for one adapter type. "present"

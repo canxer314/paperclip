@@ -1,5 +1,7 @@
 import { cancellationRequestId } from "../services/native-runtime/native-cancellation-request.js";
 import { agentEnvironmentTestService } from "../services/agent-environment-test.js";
+import { assertClaudeHostAccess } from "../services/claude-host-access.js";
+import { resolveClaudeConfigurationSource } from "@paperclipai/shared";
 import { createAgentLifecycle } from "../services/agent-lifecycle.js";
 
 import { agentIdentityService } from "../services/agent-identity.js";
@@ -574,7 +576,7 @@ export function agentRoutes(
   const approvalsSvc = approvalService(db);
   const budgets = budgetService(db);
   const environmentsSvc = environmentService(db);
-  const { resolveAdapterTestEnvironmentId, resolveAdapterTestExecutionContext, assertAdapterTestEnvironmentForCompany, testManagedEnvironment } = agentEnvironmentTestService(db, options.pluginWorkerManager);
+  const { resolveAdapterTestEnvironmentId, resolveAdapterTestExecutionContext, assertAdapterTestEnvironmentForCompany, assertClaudeHostTestTarget, testManagedEnvironment } = agentEnvironmentTestService(db, options.pluginWorkerManager);
   const environmentRuntime = environmentRuntimeService(db, {
     pluginWorkerManager: options.pluginWorkerManager,
   });
@@ -1184,10 +1186,11 @@ export function agentRoutes(
     companyId: string,
     adapterType: string,
     environmentId: string | null | undefined,
+    adapterConfig?: Record<string, unknown>,
   ) {
     if (environmentId === undefined || environmentId === null) return;
     await assertEnvironmentSelectionForCompany(environmentService(db), companyId, environmentId, {
-      allowedDrivers: allowedEnvironmentDriversForAgent(adapterType),
+      allowedDrivers: allowedEnvironmentDriversForAgent(adapterType, adapterConfig),
     });
   }
 
@@ -1966,7 +1969,8 @@ export function agentRoutes(
     return Object.hasOwn(value, key);
   }
 
-  function allowedEnvironmentDriversForAgent(adapterType: string): string[] {
+  function allowedEnvironmentDriversForAgent(adapterType: string, adapterConfig: Record<string, unknown> = {}): string[] {
+    if (adapterType === "claude_local" && resolveClaudeConfigurationSource(adapterConfig) === "host") return ["local"];
     return supportedEnvironmentDriversForAdapter(adapterType);
   }
 
@@ -2324,6 +2328,7 @@ export function agentRoutes(
     adapterType: string | null | undefined,
     adapterConfig: Record<string, unknown>,
   ) {
+    assertClaudeConfigurationTarget(adapterType, adapterConfig);
     if (adapterType === "paperclip_runner") {
       await assertFreshPaperclipRunnerProvider(companyId, adapterType, adapterConfig);
       return;
@@ -2334,6 +2339,16 @@ export function agentRoutes(
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
       throw unprocessable(`Invalid opencode_local adapterConfig: ${reason}`);
+    }
+  }
+
+  function assertClaudeConfigurationTarget(adapterType: string | null | undefined, adapterConfig: Record<string, unknown>) {
+    if (adapterConfig.configurationSource !== undefined && adapterType !== "claude_local") {
+      throw unprocessable("Configuration source is only supported by the Claude Code adapter.");
+    }
+    if (adapterType === "claude_local" && resolveClaudeConfigurationSource(adapterConfig) === "host" &&
+      adapterConfig.engine !== undefined && adapterConfig.engine !== "cli") {
+      throw unprocessable("Claude server configuration requires the CLI engine.", { code: "claude_host_target_unsupported" });
     }
   }
 
@@ -3086,7 +3101,15 @@ export function agentRoutes(
 
       const adapter = requireServerAdapter(type);
 
-      const requestedBinding = req.body.aiConnection ? aiRuntimeConnectionBindingSchema.parse(req.body.aiConnection) : undefined;
+      const source = resolveClaudeConfigurationSource(req.body.adapterConfig);
+      assertClaudeConfigurationTarget(type, req.body.adapterConfig);
+      const hostSource = type === "claude_local" && source === "host";
+      const localCheck = hostSource || (type === "claude_local" && req.body.purpose === "local-check");
+      if (req.body.purpose === "local-check" && type !== "claude_local") {
+        throw unprocessable("Local startup checks are only supported by the Claude Code adapter.");
+      }
+      if (hostSource) await assertClaudeHostAccess(db, companyId);
+      const requestedBinding = !localCheck && req.body.aiConnection ? aiRuntimeConnectionBindingSchema.parse(req.body.aiConnection) : undefined;
       const aiBinding = requestedBinding?.mode === "router" ? undefined : requestedBinding;
       if (aiBinding && req.body.testCredentials && Object.keys(req.body.testCredentials).length) throw unprocessable("A managed connection test cannot override its credentials");
       const inputAdapterConfig = aiBinding ? { ...req.body.adapterConfig, env: stripAiAuthBindings(req.body.adapterConfig?.env) } : (req.body?.adapterConfig ?? {}) as Record<string, unknown>;
@@ -3099,7 +3122,7 @@ export function agentRoutes(
         if (savedAgent.companyId !== companyId) throw notFound("Agent not found");
         await assertCanUpdateAgent(req, savedAgent);
       }
-      const poolBinding = requestedBinding ?? (savedAgent?.runtimeConfig?.aiConnection ? aiRuntimeConnectionBindingSchema.parse(savedAgent.runtimeConfig.aiConnection) : undefined);
+      const poolBinding = requestedBinding ?? (!localCheck && savedAgent?.runtimeConfig?.aiConnection ? aiRuntimeConnectionBindingSchema.parse(savedAgent.runtimeConfig.aiConnection) : undefined);
       if (poolBinding?.mode === "router") {
         await validateManagedAgentBinding(req, companyId, savedAgentId ?? "", type, req.body.adapterConfig ?? {}, poolBinding, req.body.environmentId, false, !savedAgentId);
         res.json({ adapterType: type, status: "warn", testedAt: new Date().toISOString(), checks: [{ code: "ai_connection_pool_task_test_required", level: "warn", message: "Pool configuration is available. Run a task to verify the selected account and harness; this preview does not allocate a task or contact a provider." }] });
@@ -3117,6 +3140,9 @@ export function agentRoutes(
       // merge, target resolution, sandbox lease, or adapter test runs.
       if (requestedEnvironmentId) {
         await assertAdapterTestEnvironmentForCompany(companyId, requestedEnvironmentId);
+      }
+      if (hostSource) {
+        await assertClaudeHostTestTarget(requestedEnvironmentId);
       }
       // Agent reads redact every plain environment value. When this is a saved
       // agent test, restore those display-only placeholders from the
@@ -3143,6 +3169,17 @@ export function agentRoutes(
         adapterConfigForTest = canRestoreEnv
           ? restoreRedactedAgentEnv(inputAdapterConfig, savedAgent.adapterConfig)
           : inputAdapterConfig;
+      }
+      if (hostSource) {
+        // A saved configuration can be checked, but a draft check cannot grant
+        // an Agent caller the host fields that its normal update path denies.
+        const changedConfig = { ...adapterConfigForTest };
+        if (savedAgent?.adapterType === type) {
+          for (const key of LOCAL_ADAPTER_HOST_COMMAND_KEYS) {
+            if (JSON.stringify(changedConfig[key]) === JSON.stringify(savedAgent.adapterConfig[key])) delete changedConfig[key];
+          }
+        }
+        assertNoAgentLocalAdapterHostCommandMutation(req, type, changedConfig);
       }
       if (type === "paperclip_runner" && inputAdapterConfig.provider === "openai_dot") {
         const dotEnabled = await dotRunnerBroker(db).enabled();
@@ -3195,6 +3232,7 @@ export function agentRoutes(
           companyId,
           adapterType: type,
           environmentId: requestedEnvironmentId,
+          ...(hostSource ? { claudeHostSource: true as const } : {}),
         });
 
       let releaseStatus: "released" | "failed" = "released";
@@ -3278,7 +3316,14 @@ export function agentRoutes(
 
         // Probe-only credentials bypass storage, not authorization. The schema
         // allows only provider key names; they never enter persisted config.
-        if (req.body.testCredentials) {
+        if (localCheck && environmentEnvChecks.some(c => c.level === "error")) {
+          releaseStatus = "failed";
+          res.json({ adapterType: type, status: "fail", purpose: req.body.purpose ?? "local-check", outcome: "failed",
+            localPrerequisites: "failed", configurationReproducibility: "unverifiable", modelResponse: "not_tested",
+            checks: environmentEnvChecks, testedAt: new Date().toISOString() });
+          return;
+        }
+        if (!localCheck && req.body.testCredentials) {
           effectiveAdapterConfig = {
             ...effectiveAdapterConfig,
             env: { ...parseObject(effectiveAdapterConfig.env), ...req.body.testCredentials },
@@ -3289,11 +3334,13 @@ export function agentRoutes(
             effectiveAdapterConfig.apiKey = req.body.testCredentials.API_SERVER_KEY;
           }
         }
+        if (hostSource) await assertClaudeHostAccess(db, companyId);
         const result = aiBinding ? await withManagedAiProbe(db, { companyId, agentId: req.body.agentId ?? "", responsibleUserId: responsibleUserForAiRequest(req), adapterType: type, binding: aiBinding, config: effectiveAdapterConfig, allowUninstalledPersonal: !req.body.agentId, allowUninstalledShared: !req.body.agentId && await canInstallSharedAiConnectionForNewAgent(db, req, companyId, aiBinding) }, async managed => {
           const tested = await testManagedEnvironment(type, { companyId, adapterType: type, config: managed.config, executionTarget, environmentName }, aiBinding, managed, savedAgentId ?? undefined);
           tested.checks.unshift({ code: "ai_connection_tested", level: "info", message: `Tested ${managed.accountName} — ${managed.accountOwnerUserId ? managed.accountOwnerUserId === responsibleUserForAiRequest(req) ? "your personal account" : "the owner’s account authorized for this agent" : "company-shared account"}. Responsible user: ${req.actor.type === "agent" ? responsibleUserForAiRequest(req) ?? "unavailable" : "the signed-in user"}.` });
           return tested;
-        }) : await adapter.testEnvironment({ companyId, adapterType: type, config: effectiveAdapterConfig, executionTarget, environmentName });
+        }) : await adapter.testEnvironment({ companyId, adapterType: type, config: effectiveAdapterConfig, executionTarget, environmentName,
+          ...(localCheck ? { purpose: req.body.purpose ?? "local-check" } : {}) });
 
         const prefixChecks = [
           ...(sandboxIdentityCheck ? [sandboxIdentityCheck] : []),
@@ -3307,6 +3354,8 @@ export function agentRoutes(
         res.json({
           ...result,
           status,
+          ...(localCheck && environmentEnvChecks.some(c => c.level === "error")
+            ? { outcome: "failed", localPrerequisites: "failed" } : {}),
           checks: prefixChecks.length > 0 ? [...prefixChecks, ...result.checks] : result.checks,
         });
       } catch (err) {
@@ -4293,9 +4342,9 @@ export function agentRoutes(
       adapterConfig: normalizedAdapterConfig,
       runtimeConfig: normalizedRuntimeConfig,
     };
-    await assertAgentEnvironmentSelection(companyId, hireInput.adapterType, hireInput.defaultEnvironmentId);
+    await assertAgentEnvironmentSelection(companyId, hireInput.adapterType, hireInput.defaultEnvironmentId, normalizedAdapterConfig);
     await assertAgentDefaultEnvironmentSelection(companyId, hireInput.defaultEnvironmentId, {
-      allowedDrivers: allowedEnvironmentDriversForAgent(hireInput.adapterType),
+      allowedDrivers: allowedEnvironmentDriversForAgent(hireInput.adapterType, normalizedAdapterConfig),
       allowedSandboxProviders: allowedSandboxProvidersForAgent(hireInput.adapterType),
     });
 
@@ -4595,9 +4644,9 @@ export function agentRoutes(
       adapterConfig: desiredSkillAssignment.adapterConfig,
     });
     const normalizedRuntimeConfig = await normalizeCreatedAgentRuntimeConfig(req, companyId, createInput.adapterType, normalizedAdapterConfig, createInput.runtimeConfig);
-    await assertAgentEnvironmentSelection(companyId, createInput.adapterType, createInput.defaultEnvironmentId);
+    await assertAgentEnvironmentSelection(companyId, createInput.adapterType, createInput.defaultEnvironmentId, normalizedAdapterConfig);
     await assertAgentDefaultEnvironmentSelection(companyId, createInput.defaultEnvironmentId, {
-      allowedDrivers: allowedEnvironmentDriversForAgent(createInput.adapterType),
+      allowedDrivers: allowedEnvironmentDriversForAgent(createInput.adapterType, normalizedAdapterConfig),
       allowedSandboxProviders: allowedSandboxProvidersForAgent(createInput.adapterType),
     });
 
@@ -5328,7 +5377,7 @@ export function agentRoutes(
           ? (typeof patchData.defaultEnvironmentId === "string" ? patchData.defaultEnvironmentId : null)
           : existing.defaultEnvironmentId,
         {
-          allowedDrivers: allowedEnvironmentDriversForAgent(requestedAdapterType),
+          allowedDrivers: allowedEnvironmentDriversForAgent(requestedAdapterType, (patchData.adapterConfig ?? existing.adapterConfig) as Record<string, unknown>),
           allowedSandboxProviders: allowedSandboxProvidersForAgent(requestedAdapterType),
         },
       );

@@ -269,6 +269,14 @@ require instance-admin authority. Other instance settings remain in their existi
 
 ### Claude server configuration permission
 
+Claude server configuration has a separate local startup check. It confirms
+current company permission, the local CLI, required task capabilities, and cwd
+without asking a model or proving authentication. New host-source Agents use
+this proof for automatic verification; full environment reproduction can remain
+unknown while necessary local conditions pass. Draft checks create no directory
+and do not deactivate ready Agents. See [Claude local checks](claude-local-checks.md)
+for API behavior and the remaining integration scope.
+
 Instance Access includes an independent, company-level Claude server configuration
 permission block. Instance administrators can grant or revoke permission without
 membership in the target company; this does not grant company business access.

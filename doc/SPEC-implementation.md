@@ -2126,6 +2126,17 @@ Companies may configure an optional shared API connection and model for short ac
 
 ## Claude host permission administration
 
+The Claude host-source environment test defaults to `local-check`. It branches
+before inactive managed/router authentication, resolves active env references,
+and rechecks current company permission before adapter dispatch. Version/help
+probes must confirm the runtime executable and necessary task capabilities;
+they never send a hello prompt or discover provider metadata. Automatic harness
+verification explicitly consumes local prerequisites and retains cwd preparation.
+Draft checks only inspect existing directories. Unknown necessary conditions
+prevent readiness; unknown full configuration reproduction does not. Existing
+Paperclip-source tests retain their omitted-purpose behavior. See
+[Claude local checks](claude-local-checks.md) for result contracts and scope.
+
 Company permission for Claude server configuration is managed independently in
 `/instance/access`. It defaults to deny without backfill and is audited atomically
 with each explicit instance-admin setting request. Administrators need no target

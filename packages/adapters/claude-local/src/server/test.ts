@@ -43,6 +43,8 @@ import {
   logSandboxProbeDiagnostic,
 } from "./probe-diagnostics.js";
 import { buildLocalAdapterTestProbeEnv } from "./probe-env.js";
+import { resolveClaudeConfigurationSource } from "@paperclipai/shared";
+import { checkClaudeLocalEnvironment } from "./local-check.js";
 
 function summarizeStatus(checks: AdapterEnvironmentCheck[]): AdapterEnvironmentTestResult["status"] {
   if (checks.some((check) => check.level === "error")) return "fail";
@@ -65,6 +67,9 @@ function localExecutablesMatch(
 export async function testEnvironment(
   ctx: AdapterEnvironmentTestContext,
 ): Promise<AdapterEnvironmentTestResult> {
+  if (resolveClaudeConfigurationSource(parseObject(ctx.config)) === "host" || ctx.purpose === "local-check") {
+    return checkClaudeLocalEnvironment(ctx);
+  }
   const engineSelection = await resolveClaudeExecutionEngineForRun({
     config: parseObject(ctx.config),
     executionTarget: ctx.executionTarget,

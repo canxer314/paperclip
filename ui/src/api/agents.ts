@@ -257,6 +257,7 @@ export const agentsApi = {
       agentId?: string;
       testCredentials?: Record<string, string>;
       environmentId?: string | null;
+      purpose?: import("@paperclipai/shared").AdapterEnvironmentTestPurpose;
     },
   ) =>
     api.post<AdapterEnvironmentTestResult>(
