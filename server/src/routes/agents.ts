@@ -5362,12 +5362,19 @@ export function agentRoutes(
     }
     if (existing.runtimeConfig.aiConnection && requestedRuntimeConfig && !requestedRuntimeConfig.aiConnection) requestedRuntimeConfig.aiConnection = existing.runtimeConfig.aiConnection;
     const nextAiBinding = aiRuntimeConnectionBindingSchema.safeParse(requestedRuntimeConfig?.aiConnection ?? existing.runtimeConfig.aiConnection).data;
-    if (nextAiBinding) {
+    const nextClaudeHostSource = requestedAdapterType === "claude_local" && resolveClaudeConfigurationSource(
+      (patchData.adapterConfig ?? existing.adapterConfig) as Record<string, unknown>,
+    ) === "host";
+    const previousAiBinding = aiRuntimeConnectionBindingSchema.safeParse(existing.runtimeConfig.aiConnection).data;
+    const aiBindingChanged = JSON.stringify(nextAiBinding) !== JSON.stringify(previousAiBinding);
+    const returningToPaperclip = requestedAdapterType === "claude_local" && !nextClaudeHostSource &&
+      existing.adapterType === "claude_local" && resolveClaudeConfigurationSource(existing.adapterConfig) === "host";
+    if (nextAiBinding && (!nextClaudeHostSource || aiBindingChanged)) {
       await assertCanUpdateAgent(req, existing);
-      const changed = JSON.stringify(nextAiBinding) !== JSON.stringify(existing.runtimeConfig.aiConnection);
+      const changed = aiBindingChanged;
       const aiConfig = (patchData.adapterConfig ?? existing.adapterConfig) as Record<string, unknown>;
       if (nextAiBinding.mode !== "router" && !isAiConnectionCompatible(nextAiBinding, requestedAdapterType, aiConfig.model, aiConfig.provider, aiConfig.acpxAgent)) throw unprocessable("Select an AI connection compatible with the new harness and model");
-      if (changed || (nextAiBinding.mode === "router" && requestedAdapterType !== existing.adapterType)) await validateManagedAgentBinding(req, existing.companyId, existing.id, requestedAdapterType, aiConfig, nextAiBinding, (patchData.defaultEnvironmentId !== undefined ? patchData.defaultEnvironmentId : existing.defaultEnvironmentId) as string | null, true);
+      if (changed || returningToPaperclip || (nextAiBinding.mode === "router" && requestedAdapterType !== existing.adapterType)) await validateManagedAgentBinding(req, existing.companyId, existing.id, requestedAdapterType, aiConfig, nextAiBinding, (patchData.defaultEnvironmentId !== undefined ? patchData.defaultEnvironmentId : existing.defaultEnvironmentId) as string | null, true);
     }
     if (requestedRuntimeConfig) patchData.runtimeConfig = requestedRuntimeConfig;
     if (touchesAdapterConfiguration || Object.prototype.hasOwnProperty.call(patchData, "defaultEnvironmentId")) {
@@ -5392,6 +5399,16 @@ export function agentRoutes(
       await assertCanUpdateAgent(req, existing);
     }
 
+    if (applyStoredClaudeLogin && (
+      (existing.adapterType === "claude_local" && resolveClaudeConfigurationSource(existing.adapterConfig) === "host") ||
+      (requestedAdapterType === "claude_local" && resolveClaudeConfigurationSource(
+        (patchData.adapterConfig ?? existing.adapterConfig) as Record<string, unknown>,
+      ) === "host")
+    )) {
+      throw unprocessable("Save the Paperclip configuration source separately before applying a Claude login.", {
+        code: "claude_login_source_requires_save",
+      });
+    }
     const actor = getActorInfo(req);
     const updateOptions = {
       recordRevision: {
@@ -6145,6 +6162,11 @@ export function agentRoutes(
     }
 
     const config = asRecord(agent.adapterConfig) ?? {};
+    if (resolveClaudeConfigurationSource(config) === "host") {
+      throw unprocessable("Save the Paperclip configuration source before using Claude login. Host authentication is managed by the host administrator.", {
+        code: "claude_host_login_unsupported",
+      });
+    }
     // Persisted agent: default declared mode; consumerId = agent.id matches the
     // declaration rows written at env.<KEY> by syncAgentAdapterEnvBindings.
     const { config: runtimeConfig } = await secretsSvc.resolveAdapterConfigForRuntime(

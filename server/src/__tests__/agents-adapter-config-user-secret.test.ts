@@ -371,6 +371,24 @@ describeEmbeddedPostgres("agents adapter-config user-secret resolution routes", 
 
   // ── claude-login ──────────────────────────────────────────────────
 
+  it("rejects login for a saved host source before resolving active env credentials", async () => {
+    const agentId = randomUUID();
+    mockAgentService.getById.mockResolvedValue({
+      id: agentId, companyId: COMPANY_ID, name: "Claude agent", adapterType: "claude_local",
+      adapterConfig: {
+        configurationSource: "host", engine: "cli",
+        env: { ANTHROPIC_API_KEY: { type: "user_secret_ref", key: "missing_key", version: "latest", required: true } },
+      },
+    });
+    beforeEachActor(boardUserActor);
+    const app = await createApp();
+    const res = await request(app).post(`/api/agents/${agentId}/claude-login`).send({ configurationSource: "paperclip" });
+    expect(res.status).toBe(422);
+    expect(res.body).toMatchObject({ code: "claude_host_login_unsupported" });
+    expect(mockRunClaudeLogin).not.toHaveBeenCalled();
+    expect(await db.select().from(secretAccessEvents)).toHaveLength(0);
+  });
+
   it("claude-login resolves a declared required user_secret_ref; undeclared → binding_missing", async () => {
     const definition = await seedUserSecretDefinitionWithValue("anthropic_key", "sk-owner");
     const agentId = randomUUID();

@@ -1,5 +1,53 @@
 # Claude Code local checks
 
+## Editing an existing Agent
+
+In the Claude Code settings, Configuration source edits a draft. Save explicitly
+to apply it. The saved-source summary describes configuration, not a connected
+account. Both page layouts use the same editor.
+
+Switching source keeps the shared model, authentication inputs, env bindings,
+instructions, skills, tools, schedule and history. Host models come from the
+shipped static catalog, including aliases and concrete IDs; manual IDs and
+values outside the catalog remain editable. These are suggestions, not an
+account's available models. There is no host provider refresh or model detection.
+Native default leaves the model unset; env and advanced arguments can still
+specify one. Returning to Paperclip keeps that shared value and its existing
+default-model rules.
+
+The host is the Paperclip execution host and service user, not the browser's
+computer. Agent env and advanced arguments can override native configuration,
+so source selection does not prove which account is used. Native hooks and
+helpers may execute. Paperclip constructs default MCP, permission flags and
+task sessions; operators remain responsible for custom override compatibility.
+
+Company permission appears with fixed instance-administrator guidance. A query
+failure is an error, not a denial. Permission, CLI availability, cwd failures and
+unverified sandbox compatibility do not add save gates. Existing field validity,
+company/actor permissions, approval freezes and explicit target restrictions
+still apply. Host supports the local CLI target; explicit ACP, auto and remote
+targets remain rejected. No native directory picker or env-conflict scanner is
+added.
+
+Stop the Agent and wait for current runs to finish before switching. This is a
+recommendation. Saving does not stop runs, trigger new background verification,
+clear queues or guarantee an atomic change for running/queued work.
+
+| Saved source | Draft source | Login |
+| --- | --- | --- |
+| host | host | Old login hidden; Agent claude-login API rejects |
+| host | paperclip | Save the source change separately before login |
+| paperclip | host | Login and applying stored login cannot submit the host draft |
+| paperclip | paperclip | Existing login and stored-login rules remain |
+
+Login completion checks the current source before saving. Applying a stored
+login through the update API requires both saved and requested source to be
+Paperclip. The host administrator manages native authentication under the actual
+execution user. Switching back validates the retained managed/router binding
+under the existing Paperclip rules; it does not fall back to host on failure.
+
+## Local check API
+
 The existing `POST /api/companies/:companyId/adapters/claude_local/test-environment`
 endpoint accepts an optional `purpose`, either `local-check` or `model-test`.
 `adapterConfig.configurationSource` accepts `paperclip` and `host`. Omission
@@ -71,8 +119,9 @@ including when full configuration reproduction is unknown. A generic warning
 or an unknown necessary condition cannot make a new Agent ready. Check failures
 do not deactivate an already ready Agent or delete a new Agent's record.
 
-This is the local-check slice of issue #24, implemented in #27. Isolated host
+Local checks are the slice of issue #24 implemented in #27; existing-Agent
+source editing and login boundaries are implemented in #28. Isolated host
 model testing is implemented separately; until available, explicit `model-test`
-returns `unsupported` without inference. Formal host task execution, UI source
-selection, billing, and integrated release qualification remain separate work.
+returns `unsupported` without inference. Formal host task execution, creation
+controllers, billing, and integrated release qualification remain separate work.
 This slice adds no Telemetry events, Observability spans, or run-log rows.

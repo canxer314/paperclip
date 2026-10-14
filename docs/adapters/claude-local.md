@@ -37,7 +37,43 @@ subscription quota exhaustion merely because ACP labels them `limit`.
 | `maxTurnsPerRun` | number | No | Max agentic turns per heartbeat (defaults to `300`) |
 | `dangerouslySkipPermissions` | boolean | No | Skip permission prompts (default: `true`); required for headless runs where interactive approval is impossible |
 
-## Default model
+## Configuration source for existing Agents
+
+Existing Agent settings offer Paperclip or Server Claude Code configuration.
+Changing the selection edits a draft; Save applies it without stopping current
+runs or adding background verification. Stop the Agent and wait for its runs
+to finish before switching.
+
+Host refers to the Paperclip execution host and service user, not the browser
+computer. Env and advanced arguments can override native configuration. Hooks
+and helpers may execute; Paperclip constructs default MCP, permissions and task
+sessions. Custom override compatibility remains the operator's responsibility.
+The saved-source summary does not prove a connected account.
+
+Source switching preserves one shared model and existing authentication, env,
+instructions, skills, tools and history. Host uses static suggestions and manual
+model IDs, including aliases and values outside the list. The candidates do not
+prove account availability. Native default does not specify an extra Paperclip
+model, although env and advanced arguments may specify one. Paperclip's model
+defaults below continue to apply after switching back.
+
+Company permission and query errors appear in the editor. Ask the instance
+administrator to manage permission. A legal save does not require permission,
+an installed CLI, a working cwd or verified sandbox compatibility. Illegal
+sources, explicit unsupported engines/targets, unauthorized fields and approval
+freezes still reject. Host supports the local CLI, not explicit ACP/auto or remote
+targets. The existing env editor remains available.
+
+Old login is hidden for host. If saved and draft sources differ, save the source
+change separately before using Paperclip login. Login completion and applying a
+stored login cannot silently submit a host draft. Native authentication is
+managed by the administrator under the actual execution user.
+
+Existing-Agent editing and local checks are available as parts of #24. Formal
+host task execution, creation controllers and complete release qualification
+are implemented separately.
+
+## Paperclip default model
 
 An omitted, empty, or whitespace-only `model` uses Claude Opus 5
 (`claude-opus-5`) on both the CLI and ACP engines. This also applies to existing
@@ -165,8 +201,8 @@ company business access. Ordinary board users and agent keys cannot grant it.
 Existing companies start with permission denied. Granting permission stores no
 credentials, native identity or configuration paths and does not check login or
 call a model. Existing Claude adapter configuration modes continue to work.
-Host-source selection and execution enforcement are part of the remaining #24
-implementation, not proof supplied by this permission setting.
+Formal host execution and integrated qualification remain part of #24;
+permission alone does not prove either.
 
 If the host permission directory fails, retry its directory action; it is not an
 empty directory or a denial result. If an individual update fails, the row shows

@@ -358,6 +358,95 @@ describe("agent routes adapter validation", () => {
     } finally { list.mockRestore(); refresh.mockRestore(); }
   });
 
+  it.each([["host", "paperclip"], ["paperclip", "host"], ["host", "host"]])(
+    "requires an explicit source save before applying a stored login from %s to %s",
+    async (saved, draft) => {
+      const agent = { ...(await mockAgentService.getById()), adapterType: "claude_local",
+        adapterConfig: { configurationSource: saved, engine: "cli" } };
+      mockAgentService.getById.mockResolvedValue(agent);
+      const app = await createApp();
+      const res = await requestApp(app, base => request(base).patch(`/api/agents/${agent.id}`)
+        .send({ adapterConfig: { configurationSource: draft }, applyStoredClaudeLogin: true }));
+      expect(res.status).toBe(422);
+      expect(res.body).toMatchObject({ code: "claude_login_source_requires_save" });
+      expect(mockAgentService.update).not.toHaveBeenCalled();
+    },
+  );
+
+  it("saves host source without evaluating an inactive incompatible AI binding or stopping the Agent", async () => {
+    const original = { engine: "cli", model: "gateway/model", command: "/missing/claude",
+      cwd: "/missing/workspace", filesystemScope: "workspace", networkScope: "deny",
+      env: { ANTHROPIC_API_KEY: { type: "plain", value: "keep" } }, extraArgs: ["--custom"] };
+    const binding = { mode: "shared", provider: "openai", method: "subscription",
+      connectionId: "44444444-4444-4444-8444-444444444444", grantId: "55555555-5555-4555-8555-555555555555" };
+    const agent = { ...(await mockAgentService.getById()), adapterType: "claude_local",
+      lifecycleState: "ready", adapterConfig: original, runtimeConfig: { aiConnection: binding } };
+    mockAgentService.getById.mockResolvedValue(agent);
+    const app = await createApp();
+    const res = await requestApp(app, base => request(base).patch(`/api/agents/${agent.id}`)
+      .send({ adapterConfig: { configurationSource: "host" } }));
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.adapterConfig).toEqual({ ...original, configurationSource: "host",
+      env: { ANTHROPIC_API_KEY: { type: "plain", value: "***REDACTED***" } } });
+    expect(res.body.runtimeConfig.aiConnection).toEqual(binding);
+    expect(res.body.lifecycleState).toBe("ready");
+    expect(mockHeartbeatService.cancelActiveForAgent).not.toHaveBeenCalled();
+    expect(mockSecretService.resolveAdapterConfigForRuntime).not.toHaveBeenCalled();
+    expect(mockAgentService.update).toHaveBeenCalledWith(agent.id, expect.anything(),
+      expect.objectContaining({ recordRevision: expect.objectContaining({ source: "patch" }) }));
+    expect(mockLogActivity).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ action: "agent.updated" }));
+  });
+
+  it("preserves an unavailable inactive router on host save and enforces it again when switching back", async () => {
+    const binding = { mode: "router", connectionId: "44444444-4444-4444-8444-444444444444" };
+    const agent = { ...(await mockAgentService.getById()), adapterType: "claude_local",
+      adapterConfig: { configurationSource: "host", engine: "cli" }, runtimeConfig: { aiConnection: binding } };
+    mockAgentService.getById.mockResolvedValue(agent);
+    const app = await createApp();
+    const saved = await requestApp(app, base => request(base).patch(`/api/agents/${agent.id}`)
+      .send({ adapterConfig: { model: "gateway/custom" } }));
+    expect(saved.status, JSON.stringify(saved.body)).toBe(200);
+    expect(saved.body.runtimeConfig.aiConnection).toEqual(binding);
+    const back = await requestApp(app, base => request(base).patch(`/api/agents/${agent.id}`)
+      .send({ adapterConfig: { configurationSource: "paperclip" } }));
+    expect(back.status).toBe(422);
+    expect(back.body.error).toContain("enable AI connection routing");
+    expect(mockAgentService.update).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([["invalid-source", 400], ["acp", 422], ["auto", 422]])(
+    "rejects illegal Claude host configuration %s", async (value, status) => {
+      const agent = { ...(await mockAgentService.getById()), adapterType: "claude_local", adapterConfig: { engine: "cli" } };
+      mockAgentService.getById.mockResolvedValue(agent);
+      const app = await createApp();
+      const config = value === "invalid-source" ? { configurationSource: value } : { configurationSource: "host", engine: value };
+      const res = await requestApp(app, base => request(base).patch(`/api/agents/${agent.id}`).send({ adapterConfig: config }));
+      expect(res.status).toBe(status);
+      expect(mockAgentService.update).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["command", "cwd", "args", "extraArgs"])("keeps Agent caller restrictions on host field %s", async field => {
+    const agent = { ...(await mockAgentService.getById()), adapterType: "claude_local", adapterConfig: { engine: "cli" } };
+    mockAgentService.getById.mockResolvedValue(agent);
+    const app = await createApp({ type: "agent", agentId: agent.id, companyId: "company-1", source: "agent_key" });
+    const res = await requestApp(app, base => request(base).patch(`/api/agents/${agent.id}`)
+      .send({ adapterConfig: { configurationSource: "host", [field]: field.endsWith("Args") || field === "args" ? ["--custom"] : "/custom" } }));
+    expect(res.status).toBe(403);
+    expect(mockAgentService.update).not.toHaveBeenCalled();
+  });
+
+  it("does not allow host source to bypass configuration permissions", async () => {
+    const agent = { ...(await mockAgentService.getById()), adapterType: "claude_local", adapterConfig: { engine: "cli" } };
+    mockAgentService.getById.mockResolvedValue(agent);
+    mockAccessService.decide.mockResolvedValue({ allowed: false, reason: "deny_explicit", explanation: "Not allowed" });
+    const app = await createApp();
+    const res = await requestApp(app, base => request(base).patch(`/api/agents/${agent.id}`)
+      .send({ adapterConfig: { configurationSource: "host" } }));
+    expect(res.status).toBe(403);
+    expect(mockAgentService.update).not.toHaveBeenCalled();
+  });
+
   it("creates agents for dynamically registered external adapter types", async () => {
     const { registerServerAdapter } = await import("../adapters/index.js");
     registerServerAdapter(externalAdapter);

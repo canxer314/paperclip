@@ -21,19 +21,20 @@ import type {
   EnvSecretRefBinding,
   Environment,
 } from "@paperclipai/shared";
-import { AGENT_DEFAULT_MAX_CONCURRENT_RUNS, supportedEnvironmentDriversForAdapter, isValidBrowserCode, ADAPTER_AUTH_MISSING_CHECK_CODE } from "@paperclipai/shared";
+import { AGENT_DEFAULT_MAX_CONCURRENT_RUNS, supportedEnvironmentDriversForAdapter, isValidBrowserCode, ADAPTER_AUTH_MISSING_CHECK_CODE, resolveClaudeConfigurationSource } from "@paperclipai/shared";
 import type { AdapterModel } from "../api/agents";
 import { agentsApi } from "../api/agents";
 import { ApiError } from "../api/client";
 import { environmentsApi } from "../api/environments";
 import { instanceSettingsApi } from "../api/instanceSettings";
 import { secretsApi } from "../api/secrets";
+import { accessApi } from "../api/access";
 import { assetsApi } from "../api/assets";
 import {
   DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
   DEFAULT_CODEX_LOCAL_MODEL,
 } from "@paperclipai/adapter-codex-local";
-import { DEFAULT_CLAUDE_LOCAL_MODEL } from "@paperclipai/adapter-claude-local";
+import { DEFAULT_CLAUDE_LOCAL_MODEL, models as claudeStaticModels } from "@paperclipai/adapter-claude-local";
 import { DEFAULT_CURSOR_LOCAL_MODEL } from "@paperclipai/adapter-cursor-local";
 import { DEFAULT_GEMINI_LOCAL_MODEL } from "@paperclipai/adapter-gemini-local";
 import { DEFAULT_KIMI_LOCAL_MODEL } from "@paperclipai/adapter-kimi-local";
@@ -627,6 +628,29 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
   const set = isCreate
     ? (patch: Partial<CreateConfigValues>) => props.onChange(patch)
     : null;
+  const claudeSource = adapterType === "claude_local"
+    ? isCreate ? resolveClaudeConfigurationSource(val!.adapterSchemaValues ?? {})
+      : eff("adapterConfig", "configurationSource", resolveClaudeConfigurationSource(config))
+    : "paperclip";
+  const savedClaudeSource = !isCreate && props.agent.adapterType === "claude_local"
+    ? resolveClaudeConfigurationSource(props.agent.adapterConfig) : "paperclip";
+  const hostClaudeSource = adapterType === "claude_local" && claudeSource === "host";
+  const claudeLoginAllowed = adapterType === "claude_local" && claudeSource === "paperclip" &&
+    (isCreate || savedClaudeSource === "paperclip");
+  // Login completion may arrive after a source edit. Check the current draft
+  // before either callback can flush and persist it.
+  const claudeLoginAllowedRef = useRef(claudeLoginAllowed);
+  claudeLoginAllowedRef.current = claudeLoginAllowed;
+  const permissionCompanyId = isCreate ? selectedCompanyId : props.agent.companyId;
+  const hostPermission = useQuery({
+    queryKey: queryKeys.access.companyClaudeHostAccess(permissionCompanyId ?? "none"),
+    queryFn: () => accessApi.getClaudeHostAccess(permissionCompanyId!),
+    enabled: Boolean(permissionCompanyId) && !isCreate && adapterType === "claude_local" &&
+      (hostClaudeSource || savedClaudeSource === "host"),
+    retry: false,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: "always",
+  });
 
   // Create mode holds the non-secret stored-session claim after a Claude
   // subscription login reaches the server `stored` state. The claim marks the
@@ -675,6 +699,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
   // existing agent's own page fails to save the binding.
   const handleClaudeLoginStoredEdit = async () => {
     if (isCreate) return;
+    if (!claudeLoginAllowedRef.current) return;
     const flushedEnv = flushEnvironmentDraft();
     const baseEnv =
       flushedEnv ??
@@ -757,6 +782,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
   // pending editor draft first and keep every unrelated binding.
   const handleApplyStoredClaudeLoginEdit = async () => {
     if (isCreate) return;
+    if (!claudeLoginAllowedRef.current) return;
     const flushedEnv = flushEnvironmentDraft();
     const baseEnv =
       flushedEnv ??
@@ -902,7 +928,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
   const modelProvider = adapterType === "opencode_local" && aiConnectionBindingSchema.safeParse(
     (overlay.runtime.runtimeConfig as Record<string, unknown> | undefined)?.aiConnection ?? runtimeConfig.aiConnection,
   ).data?.provider === "openrouter" ? "openrouter" : runnerProvider;
-  const connectionModels = useConnectionModels(selectedCompanyId, isCreate ? undefined : aiConnectionBindingSchema.safeParse((overlay.runtime.runtimeConfig as Record<string, unknown> | undefined)?.aiConnection ?? runtimeConfig.aiConnection).data, aiRoutingHarness(adapterType, runnerProvider, eff("adapterConfig", "acpxAgent", config.acpxAgent)));
+  const connectionModels = useConnectionModels(selectedCompanyId, isCreate || hostClaudeSource ? undefined : aiConnectionBindingSchema.safeParse((overlay.runtime.runtimeConfig as Record<string, unknown> | undefined)?.aiConnection ?? runtimeConfig.aiConnection).data, aiRoutingHarness(adapterType, runnerProvider, eff("adapterConfig", "acpxAgent", config.acpxAgent)));
   // Fetch adapter models for the effective provider, including unsaved changes.
   const modelQueryKey = selectedCompanyId
     ? queryKeys.agents.adapterModels(selectedCompanyId, adapterType, currentDefaultEnvironmentId || null, modelProvider)
@@ -917,12 +943,15 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
       environmentId: currentDefaultEnvironmentId || null,
       provider: modelProvider,
     }),
-    enabled: Boolean(selectedCompanyId) && !connectionModels,
+    enabled: Boolean(selectedCompanyId) && !connectionModels && !hostClaudeSource,
   });
   const [refreshModelsError, setRefreshModelsError] = useState<string | null>(null);
   const [refreshingModels, setRefreshingModels] = useState(false);
-  const models = connectionModels?.models ?? fetchedModels ?? externalModels ?? [];
-  const modelError = connectionModels ? connectionModels.error : fetchedModelsError;
+  const models = hostClaudeSource ? [
+    { id: "opus", label: "opus" }, { id: "sonnet", label: "sonnet" }, { id: "haiku", label: "haiku" },
+    ...claudeStaticModels,
+  ] : connectionModels?.models ?? fetchedModels ?? externalModels ?? [];
+  const modelError = hostClaudeSource ? null : connectionModels ? connectionModels.error : fetchedModelsError;
   const adapterCommandField = "command";
   const {
     data: detectedModelData,
@@ -937,7 +966,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
       }
       return agentsApi.detectModel(selectedCompanyId, adapterType);
     },
-    enabled: Boolean(selectedCompanyId && isLocal && adapterType !== "opencode_local" && adapterType !== "paperclip_runner"),
+    enabled: Boolean(selectedCompanyId && isLocal && !hostClaudeSource && adapterType !== "opencode_local" && adapterType !== "paperclip_runner"),
   });
   const detectedModel = detectedModelData?.model ?? null;
   const detectedModelCandidates = detectedModelData?.candidates ?? [];
@@ -1166,6 +1195,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
     environmentCapabilities?.sandboxProviders?.[effectiveLoginProvider]?.supportsLoginPty === true;
   const loginNeedsPty = adapterCaps.login != null;
   const showAdapterLogin =
+    (adapterType !== "claude_local" || claudeLoginAllowed) &&
     (isCreate || !((overlay.runtime.runtimeConfig as Record<string, unknown> | undefined)?.aiConnection ?? runtimeConfig.aiConnection)) &&
     adapterSupportsSandboxLogin &&
     effectiveLoginEnvironment?.driver === "sandbox" &&
@@ -1685,7 +1715,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
             </Field>
           )}
 
-          {!isDotRunner && !isCreate && selectedCompanyId && <AiConnectionField companyId={selectedCompanyId} agentId={props.agent.id} agentName={props.agent.name} adapterType={aiRoutingHarness(adapterType, eff("adapterConfig", "provider", config.provider), eff("adapterConfig", "acpxAgent", config.acpxAgent))}
+          {!isDotRunner && (adapterType !== "claude_local" || claudeLoginAllowed) && !isCreate && selectedCompanyId && <AiConnectionField companyId={selectedCompanyId} agentId={props.agent.id} agentName={props.agent.name} adapterType={aiRoutingHarness(adapterType, eff("adapterConfig", "provider", config.provider), eff("adapterConfig", "acpxAgent", config.acpxAgent))}
             routerAdapterType={adapterType} value={aiRuntimeConnectionBindingSchema.safeParse((overlay.runtime.runtimeConfig as Record<string, unknown> | undefined)?.aiConnection ?? runtimeConfig.aiConnection).data}
             model={String(eff("adapterConfig", "model", config.model) ?? "")} environmentId={currentDefaultEnvironmentId || undefined} legacy
             onChange={binding => mark("runtime", "runtimeConfig", { ...runtimeConfig, aiConnection: binding })} />}
@@ -1742,11 +1772,36 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
             </Field>
           )}
 
+          {!isCreate && adapterType === "claude_local" && (
+            <Field label="Configuration source" hint="Chooses the automatic authentication preparation for Claude Code.">
+              <NativeSelect aria-label="Configuration source" value={String(claudeSource)}
+                onChange={event => mark("adapterConfig", "configurationSource", event.target.value)}>
+                <option value="paperclip">Paperclip</option>
+                <option value="host">Server Claude Code configuration</option>
+              </NativeSelect>
+              <div className="mt-2 space-y-2 text-xs text-muted-foreground">
+                <p>Saved configuration source: {savedClaudeSource === "host" ? "Server Claude Code configuration" : "Paperclip"}</p>
+                <p>The server is Paperclip's execution host and service user, not your browser computer. Agent env and advanced arguments may override native configuration; this choice does not prove which account is used.</p>
+                <p>Native hooks and helpers may execute. Paperclip constructs default MCP, permissions and task sessions; operators are responsible for advanced override compatibility. <a className="underline" href="https://github.com/canxer314/paperclip/blob/master/doc/claude-local-checks.md" target="_blank" rel="noreferrer">Configuration boundaries</a></p>
+                <p>Stop the Agent and wait for current runs to finish before switching. Save does not stop current runs.</p>
+                {claudeSource !== savedClaudeSource && <p>Save the source switch before using Paperclip login. Login does not apply a different source draft.</p>}
+                {(hostClaudeSource || savedClaudeSource === "host") && (
+                  <div role={hostPermission.isError ? "alert" : "status"} className="space-y-2">
+                    <p>{hostPermission.isError ? "Could not load company permission. Retry the permission query." :
+                      hostPermission.isFetching ? "Loading company permission…" :
+                      hostPermission.data?.enabled === true ? "Company permission: allowed" : "Company permission: not granted"}</p>
+                    <p>Contact your instance administrator to manage permission. Permission is required for checks and new runs, not for saving configuration.</p>
+                    {hostPermission.isError && <Button type="button" variant="ghost" size="sm" onClick={() => void hostPermission.refetch()}>Retry permission query</Button>}
+                  </div>
+                )}
+              </div>
+            </Field>
+          )}
           {renderAdapterFields("adapter")}
           {isLocal && (<>
               <ModelDropdown
                 models={models}
-                loadingModels={connectionModels?.isLoading ?? fetchingModels}
+                loadingModels={!hostClaudeSource && (connectionModels?.isLoading ?? fetchingModels)}
                 value={currentModelId}
                 onChange={(v) => {
                   const supportedEfforts = setupEfforts(adapterType, v);
@@ -1768,22 +1823,22 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                 }}
                 open={modelOpen}
                 onOpenChange={setModelOpen}
-                defaultLabel={adapterType === "claude_local" ? `Default (${DEFAULT_CLAUDE_LOCAL_MODEL})` : undefined}
+                defaultLabel={hostClaudeSource ? "Native default" : adapterType === "claude_local" ? `Default (${DEFAULT_CLAUDE_LOCAL_MODEL})` : undefined}
                 allowDefault={adapterType !== "opencode_local" && adapterType !== "pi_local" && adapterType !== "paperclip_runner"}
                 required={adapterType === "opencode_local" || adapterType === "pi_local"}
                 groupByProvider={!connectionModels && (adapterType === "opencode_local" || adapterType === "pi_local")}
                 preserveOrder={Boolean(connectionModels) || adapterCuratesModelOrder(adapterType)}
                 creatable
-                detectedModel={connectionModels ? undefined : detectedModel}
+                detectedModel={hostClaudeSource || connectionModels ? undefined : detectedModel}
                 detectedModelCandidates={[]}
-                onDetectModel={connectionModels || adapterType === "opencode_local" || adapterType === "paperclip_runner"
+                onDetectModel={hostClaudeSource || connectionModels || adapterType === "opencode_local" || adapterType === "paperclip_runner"
                   ? undefined
                   : async () => {
                       const result = await refetchDetectedModel();
                       return result.data?.model ?? null;
                     }}
                 onRefreshModels={
-                  connectionModels ? connectionModels.refreshModels : supportsAdapterModelRefresh(adapterType)
+                  hostClaudeSource ? undefined : connectionModels ? connectionModels.refreshModels : supportsAdapterModelRefresh(adapterType)
                     ? handleRefreshModels
                     : undefined
                 }
@@ -1791,7 +1846,8 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                 detectModelLabel="Detect model"
                 emptyDetectHint="No model detected. Select or enter one manually."
               />
-              {(refreshModelsError || modelError) && (
+              {hostClaudeSource && <p className="text-xs text-muted-foreground">Static suggestions, not an account's available models. Native default uses Claude Code's native model configuration without an extra Paperclip model selection; env and advanced arguments may still specify a model.</p>}
+              {!hostClaudeSource && (refreshModelsError || modelError) && (
                 <p className="text-xs text-destructive">
                   {refreshModelsError
                     ?? (modelError instanceof Error
