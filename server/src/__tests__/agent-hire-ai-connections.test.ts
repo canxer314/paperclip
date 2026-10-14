@@ -8,7 +8,7 @@ import express from "express";
 import request from "supertest";
 import { and, eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { activityLog, agents, companies, companyMemberships, createDb, closeRegisteredClients, heartbeatRuns, issues, plugins, principalPermissionGrants, toolConnectionInstalls } from "@paperclipai/db";
+import { activityLog, agents, companies, companyMemberships, createDb, closeRegisteredClients, heartbeatRuns, issues, plugins, principalPermissionGrants, toolConnectionInstalls, toolConnections } from "@paperclipai/db";
 import { type AiConnectionBinding, type AiConnectionPoolMember, type PaperclipPluginManifestV1 } from "@paperclipai/shared";
 import { startEmbeddedPostgresTestDatabase } from "./helpers/embedded-postgres.js";
 import { agentRoutes } from "../routes/agents.js";
@@ -262,6 +262,97 @@ describe("agent-created hires use managed AI connections", () => {
       } finally { network.mockRestore(); unregisterServerAdapter(f.adapterType); }
     });
   }
+
+  it.each([false, true])("saves an explicit inactive connection change on host without provider verification or model rewriting (unhealthy: %s)", async unhealthy => {
+    const f = await fixture("anthropic", "api_key");
+    await db.insert(principalPermissionGrants).values({ companyId: f.companyId, principalType: "user", principalId: f.userId, permissionKey: "agents:configure" });
+    if (unhealthy) await db.update(toolConnections).set({ enabled: false, healthStatus: "error" }).where(eq(toolConnections.id, f.account.connectionId));
+    const original = getServerAdapter(f.adapterType);
+    const probe = vi.fn(async () => ({ adapterType: f.adapterType, status: "pass" as const, checks: [], testedAt: new Date().toISOString() }));
+    registerServerAdapter({ ...original, testEnvironment: probe });
+    const network = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Provider requests are not allowed"));
+    try {
+      const binding = { mode: "delegated", provider: "anthropic", method: "api_key", ...f.account };
+      const response = await request(f.app).patch(`/api/agents/${f.agentId}`).send({
+        adapterConfig: { configurationSource: "host", engine: "cli", model: "private/gateway-model" },
+        runtimeConfig: { aiConnection: binding },
+      });
+      expect(response.status, JSON.stringify(response.body)).toBe(200);
+      expect(response.body.runtimeConfig.aiConnection).toEqual(binding);
+      expect(response.body.adapterConfig.model).toBe("private/gateway-model");
+      expect(probe).not.toHaveBeenCalled();
+      expect(network).not.toHaveBeenCalled();
+    } finally { network.mockRestore(); unregisterServerAdapter(f.adapterType); }
+  });
+
+  it.each(["foreign_company", "uninstalled", "inactive_member", "wrong_kind", "wrong_provider", "wrong_method"])(
+    "rejects an unauthorized inactive host connection reference (%s) without probing", async reason => {
+      const f = await fixture("anthropic", "api_key");
+      await db.insert(principalPermissionGrants).values({ companyId: f.companyId, principalType: "user", principalId: f.userId, permissionKey: "agents:configure" });
+      let binding: Record<string, unknown> = { mode: "delegated", provider: "anthropic", method: "api_key", ...f.account };
+      if (reason === "foreign_company") binding = { ...binding, ...(await fixture("anthropic")).account };
+      if (reason === "uninstalled") await db.delete(toolConnectionInstalls).where(eq(toolConnectionInstalls.connectionId, f.account.connectionId));
+      if (reason === "inactive_member") await db.update(companyMemberships).set({ status: "inactive" })
+        .where(and(eq(companyMemberships.companyId, f.companyId), eq(companyMemberships.principalId, f.userId)));
+      if (reason === "wrong_kind") binding.mode = "shared";
+      if (reason === "wrong_provider") binding.provider = "openai";
+      if (reason === "wrong_method") binding.method = "subscription";
+      const network = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Provider requests are not allowed"));
+      try {
+        const response = await request(f.app).patch(`/api/agents/${f.agentId}`).send({
+          adapterConfig: { configurationSource: "host", engine: "cli" }, runtimeConfig: { aiConnection: binding },
+        });
+        expect(response.status, JSON.stringify(response.body)).toBe(403);
+        expect(network).not.toHaveBeenCalled();
+      } finally { network.mockRestore(); }
+    },
+  );
+
+  it.each([false, true])("authorizes an inactive host pool from any permitted member without checking its runtime (uninstalled: %s)", async uninstalled => {
+    const f = await fixture("openai", "api_key");
+    await db.insert(principalPermissionGrants).values({ companyId: f.companyId, principalType: "user", principalId: f.userId, permissionKey: "agents:configure" });
+    const extra = await aiConnectionService(db).save(f.companyId, f.userId, {
+      provider: "openai", method: "api_key", name: "Uninstalled fixture", ownership: "personal",
+      apiKey: "fixture", allAgents: false, agentIds: [],
+    }, "fixture");
+    const p = await poolFixture(f, [{ id: randomUUID(), binding: { ...extra, mode: "delegated", provider: "openai", method: "api_key" },
+      profile: { provider: "codex", model: "gpt-5.6-sol" } }]);
+    await db.update(agents).set({ adapterType: "claude_local" }).where(eq(agents.id, f.agentId));
+    await instanceSettingsService(db).updateExperimental({ enableAiConnectionRouters: false });
+    if (uninstalled) await db.delete(toolConnectionInstalls).where(eq(toolConnectionInstalls.connectionId, f.account.connectionId));
+    const network = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Provider requests are not allowed"));
+    try {
+      const response = await request(f.app).patch(`/api/agents/${f.agentId}`).send({
+        adapterConfig: { configurationSource: "host", engine: "cli", model: "private/model" },
+        runtimeConfig: { aiConnection: p.binding },
+      });
+      expect(response.status, JSON.stringify(response.body)).toBe(uninstalled ? 403 : 200);
+      if (!uninstalled) expect(response.body.runtimeConfig.aiConnection).toEqual(p.binding);
+      expect(network).not.toHaveBeenCalled();
+    } finally {
+      network.mockRestore();
+      await instanceSettingsService(db).updateExperimental({ enableAiConnectionRouters: true });
+    }
+  });
+
+  it("rejects a stored-login source mismatch before preparing or verifying the retained connection", async () => {
+    const f = await fixture("anthropic", "api_key");
+    await db.insert(principalPermissionGrants).values({ companyId: f.companyId, principalType: "user", principalId: f.userId, permissionKey: "agents:configure" });
+    await db.update(agents).set({ adapterConfig: { configurationSource: "host", engine: "cli" } }).where(eq(agents.id, f.agentId));
+    const original = getServerAdapter(f.adapterType);
+    const probe = vi.fn(async () => ({ adapterType: f.adapterType, status: "pass" as const, checks: [], testedAt: new Date().toISOString() }));
+    registerServerAdapter({ ...original, testEnvironment: probe });
+    const network = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Provider requests are not allowed"));
+    try {
+      const response = await request(f.app).patch(`/api/agents/${f.agentId}`).send({
+        adapterConfig: { configurationSource: "paperclip" }, applyStoredClaudeLogin: true,
+      });
+      expect(response.status).toBe(422);
+      expect(response.body.code).toBe("claude_login_source_requires_save");
+      expect(probe).not.toHaveBeenCalled();
+      expect(network).not.toHaveBeenCalled();
+    } finally { network.mockRestore(); unregisterServerAdapter(f.adapterType); }
+  });
 
   it.each(["test", "save"] as const)("%s marks a hello-test authentication rejection as needing attention and reconnect repairs the same default", async (operation) => {
     const f = await fixture("anthropic", "subscription");

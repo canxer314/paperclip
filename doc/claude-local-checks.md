@@ -29,6 +29,11 @@ still apply. Host supports the local CLI target; explicit ACP, auto and remote
 targets remain rejected. No native directory picker or env-conflict scanner is
 added.
 
+Explicit API edits to inactive connection references retain company membership,
+credential-sharing and target-installation checks. They do not resolve native or
+managed credentials, check provider health, discover models or select a pool's
+runtime. Unchanged inactive references are retained without those lookups.
+
 Stop the Agent and wait for current runs to finish before switching. This is a
 recommendation. Saving does not stop runs, trigger new background verification,
 clear queues or guarantee an atomic change for running/queued work.

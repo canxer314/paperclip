@@ -23,7 +23,7 @@ import {
   aiRuntimeConnectionBindingSchema,
   type AiRuntimeConnectionBinding,
 } from "@paperclipai/shared";
-import { toolConnections } from "@paperclipai/db";
+import { toolConnections, toolConnectionInstalls } from "@paperclipai/db";
 import { aiConnectionService } from "../services/ai-connections.js";
 import { defaultAiConnectionForHire } from "../services/agent-ai-connection-default.js";
 import { assertAiConnectionCreateAccess, canInstallSharedAiConnectionForNewAgent, responsibleUserForAiRequest } from "./ai-connections.js";
@@ -43,7 +43,7 @@ import path from "node:path";
 import type { Db } from "@paperclipai/db";
 import type { ChatChannelService } from "../services/chat-channels.js";
 import { activityLog, agents as agentsTable, chatConversations, companies, heartbeatRuns, issues as issuesTable, projects as projectsTable } from "@paperclipai/db";
-import { and, desc, eq, inArray, not, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, not, or, sql } from "drizzle-orm";
 import { sha256Digest } from "../services/feedback-redaction.js";
 import {
   agentSkillSyncSchema,
@@ -3032,6 +3032,37 @@ export function agentRoutes(
     res.json(detected);
   });
 
+  async function assertInactiveAiBindingAccess(req: Request, companyId: string, agentId: string, binding: AiRuntimeConnectionBinding) {
+    // An inactive responsible-user selection has no explicit credential reference.
+    if (binding.mode === "responsible_user") return;
+    const userId = responsibleUserForAiRequest(req);
+    if (!userId) throw forbidden("A responsible user must authorize this AI connection reference.");
+    if (!(await aiConnectionService(db).membership(companyId, userId))) {
+      throw forbidden("The responsible user is not an active company member.");
+    }
+    const visible = await aiConnectionService(db).list(companyId, userId);
+    const installs = await db.select({ connectionId: toolConnectionInstalls.connectionId }).from(toolConnectionInstalls)
+      .where(and(eq(toolConnectionInstalls.companyId, companyId), or(
+        and(eq(toolConnectionInstalls.targetType, "company"), eq(toolConnectionInstalls.targetId, companyId)),
+        and(eq(toolConnectionInstalls.targetType, "agent"), eq(toolConnectionInstalls.targetId, agentId)),
+      )));
+    const permitted = (reference: { connectionId: string; grantId: string }) => visible.some(account =>
+      account.id === reference.connectionId && account.grantId === reference.grantId &&
+      installs.some(install => install.connectionId === reference.connectionId));
+    if (binding.mode === "router") {
+      const pool = (await aiConnectionRouterService(db).list(companyId)).find(pool => pool.id === binding.connectionId);
+      if (!pool || !pool.members.some(member => permitted(member.binding))) {
+        throw forbidden("Choose a connection pool permitted for this agent and responsible user in this company.");
+      }
+      return;
+    }
+    const account = visible.find(account => account.id === binding.connectionId && account.grantId === binding.grantId);
+    if (!account || !permitted(binding) || account.provider !== binding.provider || account.method !== binding.method ||
+      account.ownership !== (binding.mode === "shared" ? "shared" : "personal")) {
+      throw forbidden("Choose an AI connection permitted for this agent and responsible user in this company.");
+    }
+  }
+
   async function validateManagedAgentBinding(req: Request, companyId: string, agentId: string, adapterType: string, config: Record<string, unknown>, binding: AiRuntimeConnectionBinding, environmentId: string | null | undefined, test: boolean, newAgent = false) {
     if (binding.mode === "router") {
       const settings = await import("../services/instance-settings.js");
@@ -5365,15 +5396,26 @@ export function agentRoutes(
     const nextClaudeHostSource = requestedAdapterType === "claude_local" && resolveClaudeConfigurationSource(
       (patchData.adapterConfig ?? existing.adapterConfig) as Record<string, unknown>,
     ) === "host";
+    const savedClaudeHostSource = existing.adapterType === "claude_local" &&
+      resolveClaudeConfigurationSource(existing.adapterConfig) === "host";
+    if (applyStoredClaudeLogin && (savedClaudeHostSource || nextClaudeHostSource)) {
+      await assertCanUpdateAgent(req, existing);
+      throw unprocessable("Save the Paperclip configuration source separately before applying a Claude login.", {
+        code: "claude_login_source_requires_save",
+      });
+    }
     // Normalize only the inactive host binding. Keep the legacy validation
     // trigger unchanged when saving the Paperclip source.
     const previousAiBinding = nextClaudeHostSource
       ? aiRuntimeConnectionBindingSchema.safeParse(existing.runtimeConfig.aiConnection).data
       : existing.runtimeConfig.aiConnection;
     const aiBindingChanged = JSON.stringify(nextAiBinding) !== JSON.stringify(previousAiBinding);
-    const returningToPaperclip = requestedAdapterType === "claude_local" && !nextClaudeHostSource &&
-      existing.adapterType === "claude_local" && resolveClaudeConfigurationSource(existing.adapterConfig) === "host";
-    if (nextAiBinding && (!nextClaudeHostSource || aiBindingChanged)) {
+    const returningToPaperclip = requestedAdapterType === "claude_local" && !nextClaudeHostSource && savedClaudeHostSource;
+    if (nextAiBinding && nextClaudeHostSource && aiBindingChanged) {
+      await assertCanUpdateAgent(req, existing);
+      await assertInactiveAiBindingAccess(req, existing.companyId, existing.id, nextAiBinding);
+    }
+    if (nextAiBinding && !nextClaudeHostSource) {
       await assertCanUpdateAgent(req, existing);
       const changed = aiBindingChanged;
       const aiConfig = (patchData.adapterConfig ?? existing.adapterConfig) as Record<string, unknown>;
@@ -5403,16 +5445,6 @@ export function agentRoutes(
       await assertCanUpdateAgent(req, existing);
     }
 
-    if (applyStoredClaudeLogin && (
-      (existing.adapterType === "claude_local" && resolveClaudeConfigurationSource(existing.adapterConfig) === "host") ||
-      (requestedAdapterType === "claude_local" && resolveClaudeConfigurationSource(
-        (patchData.adapterConfig ?? existing.adapterConfig) as Record<string, unknown>,
-      ) === "host")
-    )) {
-      throw unprocessable("Save the Paperclip configuration source separately before applying a Claude login.", {
-        code: "claude_login_source_requires_save",
-      });
-    }
     const actor = getActorInfo(req);
     const updateOptions = {
       recordRevision: {
