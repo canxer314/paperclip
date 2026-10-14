@@ -33,6 +33,24 @@ it("does not launch an ambient provider hello test for a pool preview", async ()
   expect(testEnvironment).toHaveBeenCalledTimes(1);
   expect(testEnvironment.mock.calls[0]?.[2].aiConnection).toEqual({ mode: "router", connectionId: "pool-id" });
 });
+it("performs only a local check for host setup and preserves its startup proof", async () => {
+  const local = {
+    ...ready, adapterType: "claude_local", purpose: "local-check", outcome: "passed",
+    localPrerequisites: "passed", configurationReproducibility: "unverifiable", modelResponse: "not_tested",
+  };
+  testEnvironment.mockResolvedValue(local);
+  const result = await testAgentSetup({ ...input, adapterType: "claude_local",
+    adapterConfig: { configurationSource: "host" }, environmentId: null });
+  expect(result).toBe(local);
+  expect(testEnvironment).toHaveBeenCalledTimes(1);
+  expect(testEnvironment.mock.calls[0]?.[2]).toMatchObject({ purpose: "local-check", adapterConfig: { configurationSource: "host" } });
+});
+it("never adds a provider hello to an explicit local-check result", async () => {
+  const local = { ...ready, purpose: "local-check", localPrerequisites: "passed", modelResponse: "not_tested" };
+  testEnvironment.mockResolvedValue(local);
+  expect(await testAgentSetup(input)).toBe(local);
+  expect(testEnvironment).toHaveBeenCalledTimes(1);
+});
 it("does not report a connection when runtime readiness passes but provider authentication fails", async () => {
   testEnvironment
     .mockResolvedValueOnce(ready)
