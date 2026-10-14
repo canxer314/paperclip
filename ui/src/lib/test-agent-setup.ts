@@ -1,5 +1,5 @@
 import type { AdapterEnvironmentTestResult } from "@paperclipai/shared";
-import { ADAPTER_AUTH_MISSING_CHECK_CODE } from "@paperclipai/shared";
+import { ADAPTER_AUTH_MISSING_CHECK_CODE, resolveClaudeConfigurationSource } from "@paperclipai/shared";
 import { agentsApi } from "../api/agents";
 
 /** ACP readiness checks do not authenticate a provider. Verify credentials with
@@ -14,7 +14,9 @@ export async function testAgentSetup(input: {
   testCredentials?: Record<string, string>;
   environmentId: string | null;
 }): Promise<AdapterEnvironmentTestResult> {
+  const hostSource = input.adapterType === "claude_local" && resolveClaudeConfigurationSource(input.adapterConfig) === "host";
   const payload = {
+    ...(hostSource ? { purpose: "local-check" as const } : {}),
     ...(input.agentId ? { agentId: input.agentId } : {}),
     ...(input.aiConnection ? { aiConnection: input.aiConnection } : {}),
     adapterConfig: input.adapterConfig,
@@ -27,6 +29,7 @@ export async function testAgentSetup(input: {
     payload,
   );
   if (
+    hostSource || runtime.purpose === "local-check" ||
     input.aiConnection?.mode === "router" ||
     runtime.status === "fail" ||
     runtime.checks.some(

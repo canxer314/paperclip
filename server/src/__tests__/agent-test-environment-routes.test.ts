@@ -2,6 +2,8 @@ import express from "express";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ServerAdapterModule } from "../adapters/index.js";
+import { companyClaudeHostAccess } from "@paperclipai/db";
+import { getTableName } from "drizzle-orm";
 
 const mockAgentService = vi.hoisted(() => ({
   getById: vi.fn(),
@@ -98,6 +100,8 @@ vi.mock("../services/dot-runner-broker.js", () => ({
 }));
 
 const testEnvironmentSpy = vi.fn();
+const hostAccessRead = vi.hoisted(() => vi.fn(async () => [{ enabled: true }]));
+const testDb = { select: () => ({ from: (table: typeof companyClaudeHostAccess) => ({ where: getTableName(table) === "company_claude_host_access" ? hostAccessRead : async () => [] }) }) };
 
 const externalAdapter: ServerAdapterModule = {
   type: "external_test",
@@ -161,7 +165,7 @@ function mockManagedRuntime(method: "api_key" | "subscription") {
   );
 }
 
-async function createApp() {
+async function createApp(actorOverride: Record<string, unknown> = {}) {
   const [{ agentRoutes }, { errorHandler }] = await Promise.all([
     vi.importActual<typeof import("../routes/agents.js")>("../routes/agents.js"),
     vi.importActual<typeof import("../middleware/index.js")>("../middleware/index.js"),
@@ -175,10 +179,11 @@ async function createApp() {
       companyIds: ["company-1"],
       source: "local_implicit",
       isInstanceAdmin: false,
+      ...actorOverride,
     };
     next();
   });
-  app.use("/api", agentRoutes({} as any));
+  app.use("/api", agentRoutes(testDb as any));
   app.use(errorHandler);
   return app;
 }
@@ -192,6 +197,7 @@ describe("agent test-environment route", () => {
   beforeEach(async () => {
     vi.resetModules();
     vi.clearAllMocks();
+    hostAccessRead.mockResolvedValue([{ enabled: true }]);
     mockInstanceSettingsService.get.mockResolvedValue({ defaultEnvironmentId: null });
     mockInstanceSettingsService.getExperimental.mockResolvedValue({ enableManagedSandboxOnly: false });
     mockEnvironmentService.findManagedSandboxEnvironment.mockResolvedValue(null);
@@ -251,6 +257,94 @@ describe("agent test-environment route", () => {
 
   afterEach(async () => {
     await unregisterTestAdapter("external_test");
+  });
+
+  it("checks host permission before touching inactive managed authentication", async () => {
+    const { registerServerAdapter } = await import("../adapters/index.js");
+    registerServerAdapter({ ...externalAdapter, type: "claude_local" });
+    const app = await createApp();
+    const response = await request(app).post("/api/companies/company-1/adapters/claude_local/test-environment")
+      .send({ adapterConfig: { configurationSource: "host", env: { ANTHROPIC_API_KEY: { type: "plain", value: "saved-key" } } },
+        aiConnection: { mode: "responsible_user", provider: "anthropic", method: "api_key" }, directoryPreparation: "create" });
+    expect(response.status, JSON.stringify(response.body)).toBe(200);
+    expect(hostAccessRead).toHaveBeenCalledTimes(2);
+    expect(mockPrepareManagedAiRuntime).not.toHaveBeenCalled();
+    expect(mockValidateAiApiKey).not.toHaveBeenCalled();
+    expect(testEnvironmentSpy).toHaveBeenCalledWith(expect.objectContaining({
+      purpose: "local-check",
+      config: expect.objectContaining({ env: { ANTHROPIC_API_KEY: { type: "plain", value: "saved-key" } } }),
+    }));
+    expect(testEnvironmentSpy.mock.calls[0][0]).not.toHaveProperty("directoryPreparation");
+  });
+
+  it("does not probe when an active environment secret is missing", async () => {
+    const { registerServerAdapter } = await import("../adapters/index.js");
+    registerServerAdapter({ ...externalAdapter, type: "claude_local" });
+    mockEnvironmentService.getById.mockResolvedValue({ id: "11111111-1111-4111-8111-111111111111", driver: "local",
+      envVars: { ANTHROPIC_API_KEY: { type: "secret_ref", secretId: "missing" } } });
+    mockSecretService.collectMissingRuntimeBindings.mockResolvedValueOnce([{ envKey: "ANTHROPIC_API_KEY" }]);
+    const response = await request(await createApp()).post("/api/companies/company-1/adapters/claude_local/test-environment")
+      .send({ adapterConfig: { configurationSource: "host" }, environmentId: "11111111-1111-4111-8111-111111111111" });
+    expect(response.status, JSON.stringify(response.body)).toBe(200);
+    expect(response.body).toMatchObject({ status: "fail", outcome: "failed", localPrerequisites: "failed", modelResponse: "not_tested" });
+    expect(testEnvironmentSpy).not.toHaveBeenCalled();
+  });
+
+  it.each([false, null])("does not check the host with permission %s", async enabled => {
+    hostAccessRead.mockResolvedValueOnce(enabled === null ? [] : [{ enabled }]);
+    const response = await request(await createApp()).post("/api/companies/company-1/adapters/claude_local/test-environment")
+      .send({ adapterConfig: { configurationSource: "host" } });
+    expect(response.status).toBe(403); expect(response.body.code).toBe("claude_host_access_denied");
+    expect(mockSecretService.resolveAdapterConfigForRuntime).not.toHaveBeenCalled();
+    expect(mockEnvironmentRuntime.acquireRunLease).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when permission is revoked before dispatch", async () => {
+    const { registerServerAdapter } = await import("../adapters/index.js");
+    registerServerAdapter({ ...externalAdapter, type: "claude_local" });
+    hostAccessRead.mockResolvedValueOnce([{ enabled: true }]).mockResolvedValueOnce([{ enabled: false }]);
+    const response = await request(await createApp()).post("/api/companies/company-1/adapters/claude_local/test-environment")
+      .send({ adapterConfig: { configurationSource: "host" } });
+    expect(response.status).toBe(403); expect(testEnvironmentSpy).not.toHaveBeenCalled();
+  });
+
+  it.each(["early", "final"])("does not convert a %s permission query error into deny", async boundary => {
+    const { registerServerAdapter } = await import("../adapters/index.js");
+    registerServerAdapter({ ...externalAdapter, type: "claude_local" });
+    if (boundary === "final") hostAccessRead.mockResolvedValueOnce([{ enabled: true }]);
+    hostAccessRead.mockRejectedValueOnce(new Error("PRIVATE_PERMISSION_QUERY"));
+    const response = await request(await createApp()).post("/api/companies/company-1/adapters/claude_local/test-environment")
+      .send({ adapterConfig: { configurationSource: "host" } });
+    expect(response.status).toBe(500); expect(response.body.code).not.toBe("claude_host_access_denied");
+    expect(JSON.stringify(response.body)).not.toContain("PRIVATE_PERMISSION_QUERY"); expect(testEnvironmentSpy).not.toHaveBeenCalled();
+  });
+
+  it.each([null, "invalid"])("rejects an invalid public source %s", async configurationSource => {
+    const response = await request(await createApp()).post("/api/companies/company-1/adapters/claude_local/test-environment")
+      .send({ adapterConfig: { configurationSource } });
+    expect(response.status).toBe(400); expect(hostAccessRead).not.toHaveBeenCalled();
+  });
+
+  it("does not prepare a remote lease for host configuration", async () => {
+    const response = await request(await createApp()).post("/api/companies/company-1/adapters/claude_local/test-environment")
+      .send({ adapterConfig: { configurationSource: "host" }, environmentId: "11111111-1111-4111-8111-111111111111" });
+    expect(response.status).toBe(422); expect(response.body.code).toBe("claude_host_target_unsupported");
+    expect(mockSecretService.resolveAdapterConfigForRuntime).not.toHaveBeenCalled(); expect(mockEnvironmentRuntime.acquireRunLease).not.toHaveBeenCalled();
+  });
+
+  it("requires the existing configuration permission independently of host permission", async () => {
+    mockAccessService.decide.mockResolvedValueOnce({ allowed: false, reason: "deny", explanation: "No configuration permission" });
+    const response = await request(await createApp()).post("/api/companies/company-1/adapters/claude_local/test-environment")
+      .send({ adapterConfig: { configurationSource: "host" } });
+    expect(response.status).toBe(403); expect(hostAccessRead).not.toHaveBeenCalled();
+  });
+
+  it("does not let Agent callers supply new host-executed draft fields", async () => {
+    mockAgentService.getById.mockResolvedValue({ id: "caller-agent", companyId: "company-1", adapterConfig: {} });
+    const app = await createApp({ type: "agent", agentId: "caller-agent", source: "api_key" });
+    const response = await request(app).post("/api/companies/company-1/adapters/claude_local/test-environment")
+      .send({ adapterConfig: { configurationSource: "host", command: "/caller/wrapper", cwd: "/caller/cwd" } });
+    expect(response.status).toBe(403); expect(mockSecretService.resolveAdapterConfigForRuntime).not.toHaveBeenCalled();
   });
 
   it("accepts a managed Dot environment without allocating an idle sandbox", async () => {

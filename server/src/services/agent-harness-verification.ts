@@ -1,7 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import { agents, companies, type Db } from "@paperclipai/db";
 import type { AdapterEnvironmentTestResult } from "@paperclipai/adapter-utils";
-import { ADAPTER_AUTH_MISSING_CHECK_CODE, aiRuntimeConnectionBindingSchema } from "@paperclipai/shared";
+import { ADAPTER_AUTH_MISSING_CHECK_CODE, aiRuntimeConnectionBindingSchema, resolveClaudeConfigurationSource } from "@paperclipai/shared";
 import { isForbiddenConfigEnvKey, parseObject } from "@paperclipai/adapter-utils/server-utils";
 import { requireServerAdapter } from "../adapters/index.js";
 import { agentEnvironmentTestService } from "./agent-environment-test.js";
@@ -12,8 +12,15 @@ import { secretService } from "./secrets.js";
 import { dotRunnerBroker } from "./dot-runner-broker.js";
 import type { PluginWorkerManager } from "./plugin-worker-manager.js";
 import type { LifecycleAgent } from "../modules/agent-lifecycle/index.js";
+import { assertClaudeHostAccess } from "./claude-host-access.js";
 
-export function assertHarnessTestPassed(result: AdapterEnvironmentTestResult) {
+export function assertHarnessTestPassed(result: AdapterEnvironmentTestResult, purpose?: "local-check") {
+  if (purpose === "local-check") {
+    if (result.purpose !== "local-check" || result.localPrerequisites !== "passed" || result.outcome !== "passed" || result.status === "fail") {
+      throw Object.assign(new Error("The harness test failed"), { code: "harness_test_failed" });
+    }
+    return;
+  }
   const verified = result.checks.some(check => check.level === "info" &&
     (/hello_probe_(passed|succeeded)$/.test(check.code) || check.code === "ai_connection_api_key_reverified"));
   const authenticationFailed = result.checks.some(check =>
@@ -37,7 +44,9 @@ export function agentHarnessVerificationService(db: Db, manager: PluginWorkerMan
     const responsibleUserId = agent.lifecycleOperation?.responsibleUserId ?? company.defaultResponsibleUserId;
     const context = { consumerType: "agent" as const, consumerId: agent.id, actorType: "system" as const,
       actorId: "agent-lifecycle", responsibleUserId };
-    let binding = agent.runtimeConfig.aiConnection ? aiRuntimeConnectionBindingSchema.parse(agent.runtimeConfig.aiConnection) : undefined;
+    const hostSource = agent.adapterType === "claude_local" && resolveClaudeConfigurationSource(agent.adapterConfig) === "host";
+    if (hostSource) await assertClaudeHostAccess(db, agent.companyId);
+    let binding = !hostSource && agent.runtimeConfig.aiConnection ? aiRuntimeConnectionBindingSchema.parse(agent.runtimeConfig.aiConnection) : undefined;
     let config = agent.adapterConfig;
     if (binding?.mode === "router") {
       const selected = await aiConnectionRouterService(db, manager).resolve({ companyId: agent.companyId,
@@ -49,8 +58,9 @@ export function agentHarnessVerificationService(db: Db, manager: PluginWorkerMan
     if (binding) config = { ...config, env: stripAiAuthBindings(config.env) };
     config = (await secrets.resolveAdapterConfigForRuntime(agent.companyId, config, context, { adapterType: agent.adapterType })).config;
     const environmentId = await tests.resolveAdapterTestEnvironmentId(agent.companyId, agent.defaultEnvironmentId);
+    if (environmentId) await tests.assertAdapterTestEnvironmentForCompany(agent.companyId, environmentId);
+    if (hostSource) await tests.assertClaudeHostTestTarget(environmentId);
     if (environmentId) {
-      await tests.assertAdapterTestEnvironmentForCompany(agent.companyId, environmentId);
       const environment = await environments.getById(environmentId);
       const env = Object.fromEntries(Object.entries(binding ? stripAiAuthBindings(environment?.envVars) : parseObject(environment?.envVars))
         .filter(([key]) => !isForbiddenConfigEnvKey(key)));
@@ -58,16 +68,19 @@ export function agentHarnessVerificationService(db: Db, manager: PluginWorkerMan
         { ...context, consumerType: "environment", consumerId: environmentId });
       config = { ...config, env: { ...resolved.env, ...parseObject(config.env) } };
     }
-    const target = await tests.resolveAdapterTestExecutionContext({ agentId: agent.id, companyId: agent.companyId, adapterType: agent.adapterType, environmentId });
+    const target = await tests.resolveAdapterTestExecutionContext({ agentId: agent.id, companyId: agent.companyId, adapterType: agent.adapterType, environmentId,
+      ...(hostSource ? { claudeHostSource: true as const } : {}) });
     let status: "released" | "failed" = "failed";
     try {
       if (target.fallbackChecks.length) throw Object.assign(new Error("The test environment is unavailable"), { code: "test_environment_unavailable" });
       const input = { companyId: agent.companyId, adapterType: agent.adapterType, config,
-        executionTarget: target.executionTarget, environmentName: target.environmentName };
+        executionTarget: target.executionTarget, environmentName: target.environmentName,
+        ...(hostSource ? { purpose: "local-check" as const, directoryPreparation: "create" as const } : {}) };
+      if (hostSource) await assertClaudeHostAccess(db, agent.companyId);
       const result = binding ? await withManagedAiProbe(db, { ...input, agentId: agent.id, responsibleUserId, binding },
         managed => tests.testManagedEnvironment(agent.adapterType, { ...input, config: managed.config }, binding!, managed, agent.id))
         : await requireServerAdapter(agent.adapterType).testEnvironment(input);
-      assertHarnessTestPassed(result);
+      assertHarnessTestPassed(result, hostSource ? "local-check" : undefined);
       status = "released";
       return "complete";
     } finally { await target.release(status); }

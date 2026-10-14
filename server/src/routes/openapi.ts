@@ -4032,12 +4032,12 @@ registry.registerPath({
   method: "post",
   path: "/api/companies/{companyId}/adapters/{type}/test-environment",
   tags: ["adapters"],
-  summary: "Validate adapter environment access for a company",
+  summary: "Check an adapter environment; Claude host source defaults to local-check without inference",
   request: {
     params: z.object({ companyId: z.string(), type: z.string() }),
     body: jsonBody(testAdapterEnvironmentSchema),
   },
-  responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized },
+  responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 422: r.unprocessable },
 });
 
 registry.registerPath({

@@ -38,6 +38,16 @@ export function agentEnvironmentTestService(db: Db, pluginWorkerManager?: Plugin
     return null;
   }
 
+  // Validate without acquiring a remote lease or preparing its workspace.
+  async function assertClaudeHostTestTarget(environmentId: string | null) {
+    const environment = environmentId ? await environmentsSvc.getById(environmentId) : null;
+    if ((environmentId && environment?.driver !== "local") ||
+      (await instanceSettings.getExperimental()).enableManagedSandboxOnly === true) {
+      throw unprocessable("Claude server configuration requires a local CLI target.", { code: "claude_host_target_unsupported" });
+    }
+    return environment;
+  }
+
   /**
    * Resolve the execution target the adapter should run its test probes against.
    *
@@ -59,6 +69,7 @@ export function agentEnvironmentTestService(db: Db, pluginWorkerManager?: Plugin
     companyId: string;
     adapterType: string;
     environmentId: string | null;
+    claudeHostSource?: true;
   }): Promise<{
     executionTarget: AdapterExecutionTarget | null;
     environmentName: string | null;
@@ -67,6 +78,12 @@ export function agentEnvironmentTestService(db: Db, pluginWorkerManager?: Plugin
     release: (status?: "released" | "failed") => Promise<void>;
   }> {
     const noopRelease = async () => {};
+
+    if (input.claudeHostSource) {
+      const environment = await assertClaudeHostTestTarget(input.environmentId);
+      return { executionTarget: null, environmentName: environment?.name ?? null,
+        fallbackChecks: [], release: noopRelease };
+    }
 
     if (!input.environmentId) {
       return {
@@ -529,5 +546,5 @@ export function agentEnvironmentTestService(db: Db, pluginWorkerManager?: Plugin
   }
 
 
-  return { resolveAdapterTestEnvironmentId, resolveAdapterTestExecutionContext, assertAdapterTestEnvironmentForCompany, testManagedEnvironment };
+  return { resolveAdapterTestEnvironmentId, resolveAdapterTestExecutionContext, assertAdapterTestEnvironmentForCompany, assertClaudeHostTestTarget, testManagedEnvironment };
 }

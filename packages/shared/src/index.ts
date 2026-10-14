@@ -2874,3 +2874,11 @@ export * from "./fast-response.js";
 
 export type { ClaudeHostAccessState, ClaudeHostAccessCompany } from "./types/access.js";
 export { setClaudeHostAccessSchema, type SetClaudeHostAccess } from "./validators/access.js";
+export {
+  CLAUDE_CONFIGURATION_SOURCES,
+  claudeConfigurationSourceSchema,
+  resolveClaudeConfigurationSource,
+  adapterEnvironmentTestPurposeSchema,
+  type ClaudeConfigurationSource,
+  type AdapterEnvironmentTestPurpose,
+} from "./claude-configuration.js";
