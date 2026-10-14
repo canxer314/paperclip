@@ -202,6 +202,7 @@ additional fields describe this operation, not persistent health:
 | Field | Meaning |
 | --- | --- |
 | `purpose` | Local check or explicit model test |
+| `selectedModel` | Saved model selection for this test; empty means native default, not actual backend identity |
 | `outcome` | `passed`, `failed`, `unverifiable`, or `unsupported` |
 | `localPrerequisites` | `passed`, `failed`, or `unverifiable` startup conditions |
 | `configurationReproducibility` | Whether the probe can reproduce the effective environment and arguments |
@@ -219,8 +220,76 @@ Local checks are the slice of issue #24 implemented in #27; existing-Agent
 source editing and login boundaries are implemented in #28. The independent
 New Agent flow is implemented in #29, and the first-company and legacy onboarding
 controller in #30. Whole-configuration rollback compatibility is implemented in
-#31. Isolated host
-model testing is implemented separately; until available, explicit `model-test`
-returns `unsupported` without inference. Formal host task execution, billing,
+#31. Saved host configuration model testing is implemented in #32. Editing and
+creation drafts cannot use that test to prove their current configuration.
+Formal host task execution, billing,
 and integrated release qualification remain separate work.
 This slice adds no Telemetry events, Observability spans, or run-log rows.
+
+## Testing the saved model
+
+An existing host-source Claude Agent has a separate **Test saved model** action.
+Save or discard execution edits first. The action tests only the server's saved
+configuration and never saves a draft. Clicking authorizes the current call
+without another confirmation dialog. Local startup checks remain separate and
+do not call a model.
+
+The same test is available to authorized API callers at the existing endpoint:
+
+```json
+{
+  "purpose": "model-test",
+  "agentId": "11111111-1111-4111-8111-111111111111"
+}
+```
+
+Do not include adapter config, connection, credentials or environment replacements.
+The server checks company ownership, configuration permission, current host
+permission and applicable company and Agent budgets. Instance administrator
+identity does not grant company business access. Manual pauses permit diagnosis
+when no other blocker applies and remain paused. Budget pauses, spent or fully
+reserved budgets, blocked unpriced usage and pending accounting still prevent
+the call. Tests read those facts without budget reconciliation or state repair.
+No project or task is associated with this saved Agent configuration test.
+
+The test uses the saved cwd, or the service default when unset. The directory
+must exist. Tasks can use a different workspace or worktree. The trusted local
+executable and effective env must match the configured execution. A wrapper,
+env override, scope or argument that cannot be reproduced safely yields
+`unsupported` without a model request. This restriction does not change saving,
+local readiness or formal execution rules. Safe value arguments such as model,
+effort, max turns, add-dir, settings and setting-sources remain explicit overrides.
+Session reuse, tool, output and unknown argument overrides are unsupported for
+this test. Required isolation flags must appear in the installed CLI's bounded
+version/help checks. The test does not guess a minimum isolation version.
+
+Paperclip starts one model CLI with the fixed input `Respond with hello.` It
+uses a new session, disables built-in and MCP tools, and disables session
+persistence. It supplies no task, wake, handoff or resume context. Native project
+instructions, referenced content and memory can still enter the model context.
+Native hooks and helpers can execute and keep side effects or records. See the
+[Claude CLI reference](https://code.claude.com/docs/en/cli-reference) for the
+print, stream-json, no-session-persistence, tools and disallowedTools options.
+
+Paperclip does not retry, restart the test or choose a fallback model. Native
+CLI or proxy retries, routing and fallback remain possible. External costs,
+the paying account and the actual backend model are unknown. The default model
+adds no Paperclip model flag or env; explicit saved values and supported user
+overrides remain in effect. The model-call timeout defaults to 45 seconds with
+a 5-second termination grace and accepts the existing probe timeout setting.
+
+Success requires a successful process exit and a complete, error-free machine
+terminal result with the expected hello response. Model output and credentials
+are not returned. The UI shows the selected model, test time, cwd and this call's
+result. A success is not a continuing health or account claim. The result lives
+only on the current page and is discarded on execution changes, company changes,
+leaving or refresh, including late responses. The button prevents repeated
+clicks while waiting. A later click authorizes another potentially paid test.
+Stopping browser waiting does not prove server cancellation or no charges.
+
+Tests create no formal run, cost event, reservation, task session or persistent
+test history. A timeout, failure or disconnect does not prove that the provider
+did no work or charged nothing. This slice adds no Telemetry events or OTLP spans;
+unconfigured Observability remains no-op and the run log stays in the instance
+database. Complete integration and real Ubuntu release qualification remain
+separate work under #24, #45 and #46.

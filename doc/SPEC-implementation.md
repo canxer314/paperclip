@@ -2126,6 +2126,21 @@ Companies may configure an optional shared API connection and model for short ac
 
 ## Claude host permission administration
 
+Saved host-source Claude Agent model tests use the existing adapter-test endpoint
+with explicit `purpose: "model-test"` and the saved Agent ID. No draft execution
+overrides are accepted. The server enforces company ownership, configuration
+permission, current host permission and read-only budget/lifecycle admission
+before preparation and before Adapter dispatch. Manual pauses remain paused;
+budget pauses, unavailable capacity and blocked accounting prevent the call.
+The test starts one bounded CLI with fixed hello input, no task or resume state,
+no tools and no session persistence. Unreproducible configurations or missing
+isolation capabilities are unsupported without a model request. Results require
+a complete successful machine terminal response. The page discards stale results
+and prevents repeated in-flight clicks. No run, cost event, reservation or test
+history is created. Native side effects, routing, retries and external costs
+remain outside these guarantees. See
+[saved model tests](claude-local-checks.md#testing-the-saved-model) for the contract.
+
 The existing configuration rollback API restores the selected revision's entire
 `afterConfig`, including Claude source and shared model, and records a linked
 `rollback` revision even when there are no changed keys. Historical source

@@ -67,7 +67,7 @@ function localExecutablesMatch(
 export async function testEnvironment(
   ctx: AdapterEnvironmentTestContext,
 ): Promise<AdapterEnvironmentTestResult> {
-  if (resolveClaudeConfigurationSource(parseObject(ctx.config)) === "host" || ctx.purpose === "local-check") {
+  if (ctx.purpose === "model-test" || resolveClaudeConfigurationSource(parseObject(ctx.config)) === "host" || ctx.purpose === "local-check") {
     return checkClaudeLocalEnvironment(ctx);
   }
   const engineSelection = await resolveClaudeExecutionEngineForRun({

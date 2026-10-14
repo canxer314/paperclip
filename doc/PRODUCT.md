@@ -269,6 +269,16 @@ require instance-admin authority. Other instance settings remain in their existi
 
 ### Claude server configuration permission
 
+Existing host-source Claude Agents have an explicit saved-model test. It reads
+the saved configuration, verifies configuration rights and current company
+permission, and reads applicable budget and lifecycle blockers without changing
+them. Manual pauses permit diagnosis when no other blocker applies. It uses one
+new CLI session with all model tools and session persistence disabled. Native
+project context, hooks, helpers, external records and costs remain possible.
+Execution drafts disable the button. Results expire with page or configuration
+changes and never become account or continuing health claims. See
+[saved model tests](claude-local-checks.md#testing-the-saved-model).
+
 Configuration history restores the entire selected revision, including source
 and the shared model, and records each successful rollback. Current permissions,
 approval restrictions and target checks still apply. Rollback restores no host
