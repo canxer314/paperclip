@@ -465,6 +465,38 @@ describe("agent routes adapter validation", () => {
     expect(res.body.adapterType).toBe("external_test");
   });
 
+  it.each(["agents", "agent-hires"])("saves a legal host configuration through %s without native permission or environment probes", async endpoint => {
+    const app = await createApp();
+    const config = { configurationSource: "host", engine: "cli", command: "/missing/claude", cwd: "/missing/workspace",
+      model: "gateway/custom-model", env: { CUSTOM_ENV: { type: "plain", value: "keep" } },
+      paperclipSandbox: { filesystem: { readwrite: ["/task"] } } };
+    const res = await requestApp(app, baseUrl => request(baseUrl).post(`/api/companies/company-1/${endpoint}`)
+      .send({ name: "Host Agent", role: "engineer", adapterType: "claude_local", adapterConfig: config }));
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    const saved = endpoint === "agent-hires" ? res.body.agent : res.body;
+    expect(saved.adapterConfig).toMatchObject({ ...config,
+      env: { CUSTOM_ENV: { type: "plain", value: endpoint === "agents" ? "***REDACTED***" : "keep" } },
+    });
+    expect(saved.runtimeConfig).not.toHaveProperty("aiConnection");
+    expect(mockSecretService.resolveAdapterConfigForRuntime).not.toHaveBeenCalled();
+    expect(mockLogActivity).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ companyId: "company-1", entityId: saved.id }));
+  });
+
+  it.each(["agents", "agent-hires"])("retains source, target and actor restrictions on host %s", async endpoint => {
+    const app = await createApp();
+    for (const [configurationSource, engine, status] of [["invalid", "cli", 400], ["host", "acp", 422], ["host", "auto", 422]] as const) {
+      const res = await requestApp(app, baseUrl => request(baseUrl).post(`/api/companies/company-1/${endpoint}`)
+        .send({ name: "Invalid host", role: "engineer", adapterType: "claude_local", adapterConfig: { configurationSource, engine } }));
+      expect(res.status, JSON.stringify(res.body)).toBe(status);
+    }
+    mockAccessService.decide.mockResolvedValue({ allowed: false, reason: "deny_explicit", explanation: "Not allowed" });
+    const denied = await createApp({ source: "session" });
+    const res = await requestApp(denied, baseUrl => request(baseUrl).post(`/api/companies/company-1/${endpoint}`)
+      .send({ name: "Denied host", role: "engineer", adapterType: "claude_local", adapterConfig: { configurationSource: "host" } }));
+    expect(res.status, JSON.stringify(res.body)).toBe(403);
+    expect(mockAgentService.create).not.toHaveBeenCalled();
+  });
+
   it("does not inject CODEX_HOME or OPENAI_API_KEY when creating a keyless codex_local agent", async () => {
     const app = await createApp();
     const res = await requestApp(app, (baseUrl) =>

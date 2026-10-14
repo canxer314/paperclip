@@ -269,6 +269,12 @@ require instance-admin authority. Other instance settings remain in their existi
 
 ### Claude server configuration permission
 
+Independent New Agent setup supports saving Claude host configuration before
+permission or the local environment is ready. Both UI layouts use the same flow.
+It requires no managed connection or model test. The confirmation separates
+creation from local verification and keeps the same Agent available for repair
+and normal lifecycle retries. See [New Agent setup](claude-local-checks.md#creating-an-agent-from-new-agent).
+
 Existing Claude Code Agents can edit their configuration source as a draft,
 retain the shared model and existing settings, and explicitly save. Host model
 suggestions are static and allow aliases, concrete IDs and manual values.

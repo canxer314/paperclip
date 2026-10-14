@@ -4,6 +4,8 @@ import { useAgentAppearanceDraft } from "../../hooks/useAgentAppearanceDraft";
 import { AiConnectionField, aiProviderForAdapter } from "../ai-connections/AiConnectionField";
 import type { AiConnectionBinding } from "@paperclipai/shared";
 import { DEFAULT_CODEX_LOCAL_MODEL } from "@paperclipai/adapter-codex-local";
+import { claudeHostModels } from "@/lib/claude-host-models";
+import { ClaudeConfigurationSourceField } from "../ClaudeConfigurationSourceField";
 import {
   SETUP_CREDENTIAL_KEYS,
   SETUP_LOGIN_HINTS,
@@ -22,7 +24,7 @@ import type {
   Agent,
   EnvBinding,
 } from "@paperclipai/shared";
-import { ADAPTER_AUTH_MISSING_CHECK_CODE } from "@paperclipai/shared";
+import { ADAPTER_AUTH_MISSING_CHECK_CODE, resolveClaudeConfigurationSource } from "@paperclipai/shared";
 import { useNavigate, useSearchParams } from "@/lib/router";
 import { agentsApi } from "@/api/agents";
 import { adaptersApi } from "@/api/adapters";
@@ -52,6 +54,7 @@ import { defaultCreateValues } from "../agent-config-defaults";
 import { ModelDropdown } from "../AgentConfigForm";
 import { Field, ToggleField } from "../agent-config-primitives";
 import { SecretPicker } from "../environment-variables-editor/SecretPicker";
+import { EnvironmentVariablesEditor, type EnvironmentVariablesEditorHandle } from "../environment-variables-editor";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { NativeSelect, nativeSelectClassName } from "../ui/select";
@@ -157,20 +160,27 @@ function Setup({
       : undefined,
   );
   const [connection, setConnection] = useState<ProviderConnection | null>(null);
+  const [envBindings, setEnvBindings] = useState<Record<string, EnvBinding>>({});
+  const envEditor = useRef<EnvironmentVariablesEditorHandle>(null);
+  const [claudeSource, setClaudeSource] = useState<"paperclip" | "host">("paperclip");
+  const hostClaudeSource = adapterType === "claude_local" && claudeSource === "host";
   const aiBinding = runtimeAiBinding ?? connection?.aiConnection;
-  const connectionModels = useConnectionModels(companyId, aiBinding, brandType);
+  const connectionModels = useConnectionModels(companyId, hostClaudeSource ? undefined : aiBinding, brandType);
+
   const [repository, setRepository] = useState("");
   const [branch, setBranch] = useState("");
   const [createdInSession, setCreated] = useState<Agent | null>(null);
+  const savedAgentId = createdInSession?.id ?? createdAgentId;
   const savedAgent = useQuery({
-    queryKey: queryKeys.agents.detail(createdAgentId ?? "new"),
-    queryFn: () => agentsApi.get(createdAgentId!, companyId),
-    enabled: Boolean(createdAgentId),
+    queryKey: queryKeys.agents.detail(savedAgentId ?? "new"),
+    queryFn: () => agentsApi.get(savedAgentId!, companyId),
+    enabled: Boolean(savedAgentId),
     retry: false,
+    refetchInterval: query => ["preparing", "verifying"].includes(query.state.data?.lifecycleState ?? "") ? 2500 : false,
   });
   const created =
-    createdInSession ??
-    (savedAgent.data?.companyId === companyId ? savedAgent.data : null);
+    (savedAgent.data?.companyId === companyId ? savedAgent.data : null) ?? createdInSession;
+  const createdReady = created?.lifecycleState === "ready" || (!created?.lifecycleState && ["idle", "active", "running"].includes(created?.status ?? ""));
   const [saving, setSaving] = useState(false);
   const [testState, setTestState] = useState<TestState | "warn">("idle");
   const [result, setResult] = useState<AdapterEnvironmentTestResult | null>(
@@ -228,18 +238,18 @@ function Setup({
   const models = useQuery({
     queryKey: queryKeys.agents.adapterModels(companyId, brandType, null, aiBinding?.provider),
     queryFn: () => agentsApi.adapterModels(companyId, brandType, { provider: aiBinding?.provider }),
-    enabled: Boolean(brandType) && showModel && !connectionModels,
+    enabled: Boolean(brandType) && showModel && !connectionModels && !hostClaudeSource,
     retry: false,
   });
   const companySecrets = useQuery({
     queryKey: queryKeys.secrets.list(companyId),
     queryFn: () => secretsApi.list(companyId),
-    enabled: hasCredentialField && adapterType !== "cursor_cloud",
+    enabled: (hasCredentialField || adapterType === "claude_local") && adapterType !== "cursor_cloud",
   });
   const userSecrets = useQuery({
     queryKey: queryKeys.secrets.myUserSecrets(companyId),
     queryFn: () => secretsApi.listMyUserSecrets(companyId),
-    enabled: hasCredentialField && adapterType !== "cursor_cloud",
+    enabled: (hasCredentialField || adapterType === "claude_local") && adapterType !== "cursor_cloud",
     retry: false,
   });
   const forced = resolveForcedKubernetesEnvironment(
@@ -343,6 +353,7 @@ function Setup({
   function buildConfig(
     nextConnection = connection,
     binding = selectedBinding,
+    agentEnv = envBindings,
   ): Record<string, unknown> {
     const values = {
       ...defaultCreateValues,
@@ -351,7 +362,7 @@ function Setup({
         model || (brandType === "codex_local" ? DEFAULT_CODEX_LOCAL_MODEL : ""),
       thinkingEffort: effort,
       dangerouslyBypassSandbox: adapterType === "codex_local",
-      envBindings: nextConnection?.env ?? {},
+      envBindings: { ...nextConnection?.env, ...agentEnv },
       ...(isRunner
         ? {
             adapterSchemaValues: {
@@ -363,6 +374,7 @@ function Setup({
         : {}),
     };
     const config = getUIAdapter(adapterType).buildAdapterConfig(values);
+    if (hostClaudeSource) config.configurationSource = "host";
     if (isRunner)
       Object.assign(config, {
         provider: (runnerProvider === "claude" || runnerProvider === "grok") ? "acpx" : runnerProvider,
@@ -396,7 +408,7 @@ function Setup({
     }
     return config;
   }
-  function preparedConfig(nextConnection = connection) {
+  function preparedConfig(nextConnection = connection, agentEnv = envBindings) {
     if (isDot && !allowUnmeteredProvider) throw new Error("Acknowledge external provider billing before creating your Dot agent.");
     if (multiProvider && (!model.trim() || !model.includes("/")))
       throw new Error("Choose or enter a model in provider/model format.");
@@ -425,9 +437,10 @@ function Setup({
     }
     if (usingKimiApi && !kimiModel.trim())
       throw new Error("Enter the Kimi API model name.");
-    return buildConfig(nextConnection);
+    return buildConfig(nextConnection, selectedBinding, agentEnv);
   }
   function pendingCredentials(nextConnection = connection) {
+    if (hostClaudeSource) return {};
     if (aiBinding || nextConnection?.aiConnection) return {};
     return {
       ...nextConnection?.credentials,
@@ -439,12 +452,13 @@ function Setup({
 
   async function runTest(nextConnection = connection): Promise<boolean> {
     if (!ready) return false;
+    const agentEnv = envEditor.current?.flushPendingDraft() ?? envBindings;
     const run = ++generation.current;
     setTestState("running");
     setResult(null);
     setError(null);
     try {
-      const config = await preparedConfig(nextConnection);
+      const config = preparedConfig(nextConnection, agentEnv);
       const tested = await testAgentSetup({
         companyId,
         adapterType,
@@ -459,7 +473,7 @@ function Setup({
       setTestState(blocking(tested) ? "fail" : tested.status);
       return (
         !blocking(tested) &&
-        (!connectionAdapter ||
+        (hostClaudeSource || !connectionAdapter ||
           tested.checks.some((check) =>
             check.code.endsWith("hello_probe_passed"),
           ))
@@ -482,8 +496,8 @@ function Setup({
       !ready ||
       !name.trim() ||
       testState === "running" ||
-      testState === "fail" ||
-      (connectionAdapter && !connection)
+      (!hostClaudeSource && testState === "fail") ||
+      (!hostClaudeSource && connectionAdapter && !connection)
     )
       return;
     savingRef.current = true;
@@ -492,7 +506,7 @@ function Setup({
     const staged: Array<{ remove: () => Promise<unknown> }> = [];
     let hired = false;
     try {
-      const config = preparedConfig();
+      const config = preparedConfig(connection, envEditor.current?.flushPendingDraft() ?? envBindings);
       const credentials = pendingCredentials();
       // Untested entered keys must pass a probe before they can be stored.
       if (Object.keys(credentials).length && !(await runTest())) return;
@@ -526,10 +540,10 @@ function Setup({
           (forced.forced || managedOnly ? environmentId : null),
         runtimeConfig: { ...buildNewAgentRuntimeConfig({ heartbeatEnabled: false }), ...(aiBinding ? { aiConnection: aiBinding } : {}) },
         budgetMonthlyCents: 0,
-        ...(connection?.storedSessionId
+        ...(!hostClaudeSource && connection?.storedSessionId
           ? { storedSessionId: connection.storedSessionId }
           : {}),
-        ...(connection?.applyStoredClaudeLogin
+        ...(!hostClaudeSource && connection?.applyStoredClaudeLogin
           ? { applyStoredClaudeLogin: true }
           : {}),
       });
@@ -603,7 +617,7 @@ function Setup({
       />
     );
   const steps = [
-    ...(connectionAdapter ? ["connect" as const] : []),
+    ...(connectionAdapter && !hostClaudeSource ? ["connect" as const] : []),
     "runtime" as const,
     "saved" as const,
   ];
@@ -723,9 +737,16 @@ function Setup({
             </ol>
           </nav>
           <div className="min-w-0 flex-1">
-            <AnimatePresence mode="wait" initial={false}>
-              <motion.div key={screen} {...stepMotion}>
-                {screen === "connect" && connectionAdapter ? (
+            {!created && adapterType === "claude_local" && (
+              <ClaudeConfigurationSourceField companyId={companyId} value={claudeSource} disabled={busy}
+                onChange={source => {
+                  envEditor.current?.flushPendingDraft();
+                  setClaudeSource(source);
+                  resetTest();
+                  setScreen(source === "host" ? "runtime" : "connect");
+                }} />
+            )}
+            {!created && connectionAdapter && <div hidden={screen !== "connect" || hostClaudeSource}>
                   <OnboardingCard className="mx-auto">
                     <div className="mb-8">
                       <OnboardingHeading
@@ -735,6 +756,7 @@ function Setup({
                     </div>
                     {ready ? <AgentProviderConnection
                       key={environmentId ?? "local"}
+                      active={screen === "connect" && !hostClaudeSource}
                       companyId={companyId}
                       adapterType={connectionAdapter}
                       environmentId={environmentId}
@@ -788,6 +810,11 @@ function Setup({
                       }}
                     /> : <p role="status" className="text-sm text-muted-foreground">Loading connection settings…</p>}
                   </OnboardingCard>
+            </div>}
+            <AnimatePresence mode="wait" initial={false}>
+              <motion.div key={screen} {...stepMotion}>
+                {screen === "connect" && connectionAdapter ? (
+                  null
                 ) : screen === "saved" && created ? (
                   <div className="space-y-6">
                     <div className="space-y-6 rounded-lg border border-border p-6">
@@ -795,7 +822,7 @@ function Setup({
                         <Check className="size-5" />
                         {created.status === "pending_approval"
                           ? "Agent submitted for approval"
-                          : isDot ? "Your Dot agent has been created" : "Your agent is ready"}
+                          : isDot ? "Your Dot agent has been created" : createdReady ? "Your agent is ready" : "Your agent has been created"}
                       </h2>
                       <dl className="grid grid-cols-2 gap-4 text-sm">
                         <dt className="text-muted-foreground">Adapter</dt>
@@ -811,11 +838,17 @@ function Setup({
                         <dt className="text-muted-foreground">Environment</dt>
                         <dd>{environmentLabel}</dd>
                       </dl>
+                      {created.adapterType === "claude_local" && <p className="text-sm text-muted-foreground">Saved configuration source: {resolveClaudeConfigurationSource(created.adapterConfig) === "host" ? "Server Claude Code configuration" : "Paperclip"}</p>}
                       <p className="text-sm text-muted-foreground">
                         {created.status === "pending_approval"
                           ? "An organization administrator must approve this agent before it can work."
-                          : isDot ? "Pair your Dot and test event delivery in configuration before assigning work." : "Assign a task when you’re ready for this agent to work."}
+                          : isDot ? "Pair your Dot and test event delivery in configuration before assigning work."
+                          : !createdReady ? created.lifecycleError || created.status === "error"
+                            ? "Configuration saved. Local verification needs attention. Review the Agent configuration and repair permission or the environment; existing verification retries use this same record."
+                            : "Configuration saved. Local verification has not completed. You can open this Agent and finish setup without creating another record."
+                          : "Assign a task when you’re ready for this agent to work."}
                       </p>
+                      {savedAgent.isError && <p role="alert" className="text-sm text-destructive">The Agent was saved, but its current verification state could not be loaded. Open the Agent to review it.</p>}
                     </div>
                     <div className="flex flex-wrap justify-between gap-3">
                       <Button
@@ -829,10 +862,11 @@ function Setup({
                         disabled={created.status === "pending_approval"}
                         onClick={() => isDot
                           ? navigate(`${agentUrl(created)}/runtime`)
+                          : !createdReady ? navigate(agentUrl(created))
                           : openNewIssue({ assigneeAgentId: created.id, status: "todo" })
                         }
                       >
-                        {isDot ? "Pair Dot" : `Assign ${created.name} a Task`}
+                        {isDot ? "Pair Dot" : !createdReady && created.status !== "pending_approval" ? "Open Agent" : `Assign ${created.name} a Task`}
                         <ArrowRight className="size-4" />
                       </Button>
                     </div>
@@ -860,20 +894,21 @@ function Setup({
                           <AiConnectionField companyId={companyId} agentName={name} adapterType={brandType} model={model} environmentId={environmentId ?? undefined} value={aiBinding}
                             onChange={binding => { binding.mode !== "router" && setRuntimeAiBinding(binding); resetTest(); }} />
                         )}
-                        {(connectionModels ? connectionModels.error : models.error) && <p role="alert" className="text-sm text-destructive">Could not load models. Retry or enter a model ID manually.</p>}
+                        {!hostClaudeSource && (connectionModels ? connectionModels.error : models.error) && <p role="alert" className="text-sm text-destructive">Could not load models. Retry or enter a model ID manually.</p>}
                         {((showModel && !usingKimiApi) ||
                           efforts.length > 0) && (
                           <div className="grid items-start gap-5 sm:grid-cols-2">
                             {showModel && !usingKimiApi && (
                               <ModelDropdown
                                 presentation="native"
-                                models={connectionModels?.models ?? models.data ?? []}
-                                loadingModels={connectionModels?.isLoading ?? models.isLoading}
-                                onRefreshModels={connectionModels?.refreshModels}
+                                defaultLabel={hostClaudeSource ? "Native default" : undefined}
+                                models={hostClaudeSource ? claudeHostModels : connectionModels?.models ?? models.data ?? []}
+                                loadingModels={!hostClaudeSource && (connectionModels?.isLoading ?? models.isLoading)}
+                                onRefreshModels={hostClaudeSource ? undefined : connectionModels?.refreshModels}
                                 refreshingModels={connectionModels?.refreshing}
                                 value={model}
                                 onChange={(value) => {
-                                  setModel(connectionModels?.resolveModel(value) ?? value);
+                                  setModel(hostClaudeSource ? value : connectionModels?.resolveModel(value) ?? value);
                                   if (
                                     effort &&
                                     !setupEfforts(adapterType, value).includes(
@@ -923,7 +958,8 @@ function Setup({
                             )}
                           </div>
                         )}
-                        {!aiBinding && SETUP_LOGIN_HINTS[adapterType] && (
+                        {hostClaudeSource && <p className="text-xs text-muted-foreground">Static suggestions, not an account's available models. Native default uses Claude Code's native model configuration without an extra Paperclip model selection; env and advanced arguments may still specify a model.</p>}
+                        {!hostClaudeSource && !aiBinding && SETUP_LOGIN_HINTS[adapterType] && (
                           <p className="text-sm text-muted-foreground">
                             {SETUP_LOGIN_HINTS[adapterType]}
                           </p>
@@ -1129,6 +1165,21 @@ function Setup({
                           </div>
                         )}
                       </section>
+                      {adapterType === "claude_local" && <EnvironmentVariablesEditor
+                        ref={envEditor}
+                        value={envBindings}
+                        onChange={value => { setEnvBindings(value ?? {}); resetTest(); }}
+                        onDirtyChange={dirty => { if (dirty) resetTest(); }}
+                        secrets={companySecrets.data ?? []}
+                        userSecretDefinitions={userSecrets.data?.map(entry => entry.definition)}
+                        onCreateSecret={async (secretName, value) => {
+                          const secret = await secretsApi.create(companyId, { name: secretName, value, provider: "local_encrypted" });
+                          void cache.invalidateQueries({ queryKey: queryKeys.secrets.list(companyId) });
+                          return secret;
+                        }}
+                        disabled={busy}
+                        hideDraftActions
+                      />}
                       {!["cursor_cloud", "hermes_gateway"].includes(
                         adapterType,
                       ) && (
@@ -1143,7 +1194,7 @@ function Setup({
                               setEnvironmentOverride(event.target.value);
                               setConnection(null);
                               resetTest();
-                              if (connectionAdapter) setScreen("connect");
+                              if (connectionAdapter && !hostClaudeSource) setScreen("connect");
                             }}
                           >
                             <option value="">
@@ -1161,11 +1212,11 @@ function Setup({
                       )}
                     </fieldset>
                     <RuntimeTestCard
-                      variant={isDot ? "prerequisites" : "connection"}
+                      variant={hostClaudeSource ? "local-check" : isDot ? "prerequisites" : "connection"}
                       state={testState}
                       result={result}
                       error={error}
-                      disabled={!ready || busy || Boolean(connectionAdapter && !connection)}
+                      disabled={!ready || busy || Boolean(!hostClaudeSource && connectionAdapter && !connection)}
                       onTest={() => void runTest()}
                     />
                     {error && testState !== "fail" && (
@@ -1173,8 +1224,8 @@ function Setup({
                         {error}
                       </p>
                     )}
-                    <div className="flex justify-between border-t border-border py-5">
-                      {connectionAdapter ? (
+                    <div className="flex items-center justify-between border-t border-border py-5">
+                      {connectionAdapter && !hostClaudeSource ? (
                         <Button
                           type="button"
                           variant="ghost"
@@ -1184,10 +1235,14 @@ function Setup({
                           <ArrowLeft className="size-4" />
                           Connection
                         </Button>
+                      ) : hostClaudeSource ? (
+                        <Button type="button" variant="ghost" disabled={busy} onClick={() => navigate("/agents/all")}>
+                          Cancel
+                        </Button>
                       ) : (
                         <span />
                       )}
-                      {connectionAdapter && !connection ? <Button
+                      {!hostClaudeSource && connectionAdapter && !connection ? <Button
                         type="button"
                         disabled={!ready || busy}
                         onClick={() => setScreen("connect")}
@@ -1199,8 +1254,8 @@ function Setup({
                         disabled={
                           !ready ||
                           busy ||
-                          testState === "fail" ||
-                          Boolean(connectionAdapter && !connection)
+                          (!hostClaudeSource && testState === "fail") ||
+                          Boolean(!hostClaudeSource && connectionAdapter && !connection)
                         }
                       >
                         {saving ? "Creating…" : "Finish setup"}

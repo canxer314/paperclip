@@ -18,6 +18,7 @@ const api = vi.hoisted(() => ({
   getClaudeOAuthTokenStatus: vi.fn(),
 }));
 const envApi = vi.hoisted(() => ({ list: vi.fn(), capabilities: vi.fn() }));
+const access = vi.hoisted(() => ({ getClaudeHostAccess: vi.fn() }));
 const settings = vi.hoisted(() => ({
   get: vi.fn(),
   getExperimental: vi.fn(),
@@ -47,6 +48,7 @@ const managedApi = vi.hoisted(() => ({
 vi.mock("@/api/ai-connections", () => ({ aiConnectionsApi: managedApi }));
 vi.mock("@/api/agents", () => ({ agentsApi: api }));
 vi.mock("@/api/environments", () => ({ environmentsApi: envApi }));
+vi.mock("@/api/access", () => ({ accessApi: access }));
 vi.mock("@/api/instanceSettings", () => ({ instanceSettingsApi: settings }));
 vi.mock("@/api/secrets", () => ({ secretsApi: secrets }));
 vi.mock("@/api/adapters", () => ({
@@ -128,6 +130,15 @@ async function fill(label: string, value: string) {
     input.dispatchEvent(new Event("input", { bubbles: true }));
   });
 }
+async function selectSource(value: string) {
+  const select = container.querySelector<HTMLSelectElement>('[aria-label="Configuration source"]');
+  expect(select).toBeTruthy();
+  await act(async () => {
+    select!.value = value;
+    select!.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await settle();
+}
 async function render(adapter = "pi_local", runnerProvider = "codex") {
   state.params = new URLSearchParams({
     name: "Atlas",
@@ -176,8 +187,10 @@ beforeEach(() => {
   api.getAdapterAuthSignal.mockResolvedValue({ status: "present" });
   api.getClaudeOAuthTokenStatus.mockRejectedValue(new ApiError("Not found", 404, null));
   api.testEnvironment.mockResolvedValue(pass);
+  api.get.mockReset();
+  api.get.mockImplementation(async () => (await api.hire.mock.results.at(-1)?.value)?.agent);
   api.hire.mockImplementation(async (_company, input) => ({
-    agent: { ...input, id: "new-agent", status: "idle", urlKey: "atlas" },
+    agent: { ...input, companyId: "company-1", id: "new-agent", status: "idle", urlKey: "atlas" },
   }));
   envApi.list.mockResolvedValue([
     { id: "local-1", name: "Local", driver: "local", config: {} },
@@ -186,6 +199,7 @@ beforeEach(() => {
   settings.get.mockResolvedValue({ defaultEnvironmentId: "local-1" });
   settings.getExperimental.mockResolvedValue({ enableNativeRunner: true });
   settings.getGeneral.mockResolvedValue({ executionMode: "any" });
+  access.getClaudeHostAccess.mockResolvedValue({ enabled: false });
   secrets.list.mockResolvedValue([]);
   secrets.create.mockResolvedValue({ id: "org-secret-1" });
   secrets.remove.mockResolvedValue({ ok: true });
@@ -200,6 +214,158 @@ afterEach(async () => {
   container.remove();
 });
 describe("New agent setup", () => {
+  it("leaves host setup through Cancel without saving a draft", async () => {
+    await render("claude_local");
+    await selectSource("host");
+    await fill("Model", "unsaved-model");
+    await click("Cancel");
+    expect(state.navigate).toHaveBeenLastCalledWith("/agents/all");
+    expect(api.hire).not.toHaveBeenCalled();
+    expect(api.testEnvironment).not.toHaveBeenCalled();
+  });
+  it("keeps host configuration and env drafts available after changing the environment and source", async () => {
+    envApi.list.mockResolvedValue([
+      { id: "local-1", name: "Local", status: "active", driver: "local", config: {} },
+      { id: "local-2", name: "Another local", status: "active", driver: "local", config: {} },
+    ]);
+    await render("claude_local");
+    await selectSource("host");
+    await click("Add variable");
+    await fill("Variable name", "CUSTOM_ENV");
+    await fill("Variable value", "preserved-draft");
+    await selectSource("paperclip");
+    await selectSource("host");
+    expect(container.querySelector<HTMLInputElement>('[aria-label="Variable value"]')?.value).toBe("preserved-draft");
+    const select = container.querySelector<HTMLSelectElement>('[aria-label="Environment"]')!;
+    await act(async () => { select.value = "local-2"; select.dispatchEvent(new Event("change", { bubbles: true })); });
+    await settle();
+    expect(container.querySelector('button[type="submit"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Agent setup steps"]')?.textContent).not.toContain("Connect");
+    await click("Finish setup");
+    expect(api.hire.mock.calls[0][1]).toMatchObject({ defaultEnvironmentId: "local-2", adapterConfig: { configurationSource: "host", env: { CUSTOM_ENV: { value: "preserved-draft" } } } });
+  });
+  it("checks the pending env draft and keeps the local result visible", async () => {
+    api.testEnvironment.mockResolvedValue({ ...pass, purpose: "local-check", localPrerequisites: "passed", modelResponse: "not_tested" });
+    await render("claude_local");
+    await selectSource("host");
+    await click("Add variable");
+    await fill("Variable name", "CUSTOM_ENV");
+    await fill("Variable value", "current-draft");
+    await click("Check local conditions");
+    expect(api.testEnvironment).toHaveBeenLastCalledWith("company-1", "claude_local", expect.objectContaining({
+      purpose: "local-check", adapterConfig: expect.objectContaining({ env: { CUSTOM_ENV: { type: "plain", value: "current-draft" } } }),
+    }));
+    expect(container.textContent).toContain("Local conditions passed");
+    expect(container.textContent).toContain("Authentication and model availability remain untested");
+  });
+  it("does not apply an inactive stored Paperclip login when saving host", async () => {
+    api.getClaudeOAuthTokenStatus.mockResolvedValue({ status: "present" });
+    await render("claude_local");
+    await click("ClaudeSubscription");
+    await click("Use saved subscription");
+    await selectSource("host");
+    await click("Finish setup");
+    const input = api.hire.mock.calls[0][1];
+    expect(input).not.toHaveProperty("applyStoredClaudeLogin");
+    expect(input).not.toHaveProperty("storedSessionId");
+  });
+  it("keeps editable env overrides when a permission query fails and saves them without a check", async () => {
+    access.getClaudeHostAccess.mockRejectedValue(new ApiError("Permission query failed", 503, null));
+    await render("claude_local");
+    await selectSource("host");
+    expect(container.textContent).toContain("Could not load company permission");
+    expect(container.textContent).not.toContain("Company permission: not granted");
+    await click("Add variable");
+    await fill("Variable name", "CUSTOM_ENV");
+    await fill("Variable value", "keep-this");
+    await click("Finish setup");
+    expect(api.hire.mock.calls[0][1].adapterConfig.env).toMatchObject({ CUSTOM_ENV: { type: "plain", value: "keep-this" } });
+    expect(api.testEnvironment).not.toHaveBeenCalled();
+  });
+  it("finishes into the same saved Agent after automatic local verification fails", async () => {
+    const record = { id: "new-agent", companyId: "company-1", name: "Atlas", urlKey: "atlas", adapterType: "claude_local",
+      adapterConfig: { configurationSource: "host" }, status: "idle", lifecycleState: "verifying", lifecycleError: null as string | null };
+    api.hire.mockResolvedValue({ agent: { ...record } });
+    api.get.mockImplementation(async () => ({ ...record }));
+    await render("claude_local");
+    await selectSource("host");
+    await click("Finish setup");
+    expect(container.textContent).toContain("Your agent has been created");
+    expect(container.textContent).not.toContain("Your agent is ready");
+    expect(container.textContent).toContain("Saved configuration source: Server Claude Code configuration");
+    expect(container.textContent).toContain("Local verification has not completed");
+    record.lifecycleError = "private-provider-error";
+    await act(async () => cache.invalidateQueries({ queryKey: queryKeys.agents.detail("new-agent") }));
+    await settle();
+    expect(container.textContent).toContain("Local verification needs attention");
+    expect(container.textContent).not.toContain("private-provider-error");
+    expect(container.textContent).not.toContain("Could not create the agent");
+    expect(api.hire).toHaveBeenCalledTimes(1);
+    await click("Open Agent");
+    expect(state.navigate).toHaveBeenLastCalledWith("/agents/atlas");
+    expect(state.openNewIssue).not.toHaveBeenCalled();
+  });
+  it.each([
+    ["permission denied", new ApiError("Contact your instance administrator.", 403, null)],
+    ["permission query failed", new ApiError("Could not query permission.", 503, null)],
+    ["CLI missing", { code: "claude_cli_missing", message: "Claude CLI is unavailable." }],
+    ["cwd failed", { code: "claude_cwd_unavailable", message: "Working directory is unavailable." }],
+    ["executable unverified", { code: "claude_executable_unverified", message: "The configured executable cannot be verified." }],
+  ])("saves host after a local check reports %s", async (_label, failure) => {
+    if (failure instanceof ApiError) api.testEnvironment.mockRejectedValue(failure);
+    else api.testEnvironment.mockResolvedValue({ ...pass, status: "fail", purpose: "local-check", modelResponse: "not_tested", checks: [{ ...failure, level: "error" }] });
+    await render("claude_local");
+    await selectSource("host");
+    await click("Check local conditions");
+    expect(api.testEnvironment).toHaveBeenCalledTimes(1);
+    expect(api.testEnvironment).toHaveBeenCalledWith("company-1", "claude_local", expect.objectContaining({
+      purpose: "local-check", adapterConfig: expect.objectContaining({ configurationSource: "host" }),
+    }));
+    expect(container.textContent).toContain("Local check failed");
+    await click("Finish setup");
+    expect(api.hire).toHaveBeenCalledTimes(1);
+    expect(managedApi.create).not.toHaveBeenCalled();
+  });
+  it("keeps the Paperclip authentication draft and shared model when switching sources", async () => {
+    await render("claude_local");
+    await click("ClaudeAPI key");
+    await fill("API key", "unsubmitted-key");
+    await selectSource("host");
+    await fill("Model", "gateway/custom-model");
+    api.adapterModels.mockClear();
+    managedApi.list.mockClear();
+    await act(async () => cache.refetchQueries({ type: "active" }));
+    await settle();
+    expect(api.adapterModels).not.toHaveBeenCalled();
+    expect(managedApi.list).not.toHaveBeenCalled();
+    expect(api.testEnvironment).not.toHaveBeenCalled();
+    expect(api.hire).not.toHaveBeenCalled();
+    await selectSource("paperclip");
+    expect(container.querySelector<HTMLInputElement>('[aria-label="API key"]')?.value).toBe("unsubmitted-key");
+    await selectSource("host");
+    expect(container.querySelector<HTMLInputElement>('[aria-label="Model"]')?.value).toBe("gateway/custom-model");
+    await click("Finish setup");
+    expect(api.hire.mock.calls[0][1].adapterConfig.model).toBe("gateway/custom-model");
+    expect(managedApi.create).not.toHaveBeenCalled();
+    expect(JSON.stringify(api.hire.mock.calls)).not.toContain("unsubmitted-key");
+  });
+  it("saves host Claude without a managed connection or a model test when permission is absent", async () => {
+    await render("claude_local");
+    expect(container.querySelector<HTMLSelectElement>('[aria-label="Configuration source"]')?.value).toBe("paperclip");
+    await selectSource("host");
+    expect(container.textContent).toContain("Company permission: not granted");
+    expect(container.textContent).toContain("not your browser computer");
+    await click("Finish setup");
+    expect(api.hire).toHaveBeenCalledTimes(1);
+    const input = api.hire.mock.calls[0][1];
+    expect(input.adapterConfig).toMatchObject({ configurationSource: "host" });
+    expect(input.adapterConfig).not.toHaveProperty("model");
+    expect(input.runtimeConfig).not.toHaveProperty("aiConnection");
+    expect(input).not.toHaveProperty("applyStoredClaudeLogin");
+    expect(input).not.toHaveProperty("storedSessionId");
+    expect(api.testEnvironment).not.toHaveBeenCalled();
+    expect(managedApi.create).not.toHaveBeenCalled();
+  });
   it("creates Dot through its independent choice without CLI or model setup, then routes to pairing", async () => {
     settings.getExperimental.mockResolvedValue({ enableNativeRunner: false, enableOpenAiDot: true, enablePublicMcp: true });
     await render("paperclip_runner", "openai_dot");

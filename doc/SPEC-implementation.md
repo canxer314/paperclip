@@ -2126,6 +2126,16 @@ Companies may configure an optional shared API connection and model for short ac
 
 ## Claude host permission administration
 
+The independent New Agent flow defaults to the Paperclip source. Host uses the
+shared source control and static model catalog, keeps authentication/model/env
+drafts, and can finish a legal save without company host permission, CLI/cwd
+availability or a paid test. No connection is fabricated. Creation success and
+local verification are separate results. Pending or failed verification retains
+the record and permits navigation to it; normal lifecycle retries provide local
+proof without a model prompt. Both UI layouts use the same route. Existing
+actor/company, approval and target checks remain authoritative. See
+[New Agent setup](claude-local-checks.md#creating-an-agent-from-new-agent).
+
 Existing Claude Code settings expose a draft-only configuration source choice
 and one shared model. Host uses shipped static candidates with manual values,
 without provider refresh or metadata discovery. Authentication fields remain

@@ -47,6 +47,7 @@ export function AgentProviderConnection({
   testError,
   managedAccount,
   advancedConnection,
+  active = true,
 }: {
   companyId: string;
   adapterType: "claude_local" | "codex_local" | "grok_local";
@@ -59,6 +60,8 @@ export function AgentProviderConnection({
   testConnection: (connection: ProviderConnection) => Promise<boolean>;
   testError?: string | null;
   advancedConnection?: { content: ReactNode; value?: AiConnectionBinding };
+  /** Suspend login and queries while retaining this setup's authentication draft. */
+  active?: boolean;
   /** Connections supplies its access intent; presentation and login controllers stay shared. */
   managedAccount?: {
     intent: AiConnectionLoginIntent;
@@ -69,9 +72,17 @@ export function AgentProviderConnection({
     onComplete: (result: { connectionId: string; grantId: string; method: "subscription" | "api_key" }) => void;
   };
 }) {
-  const health = useQuery({ queryKey: queryKeys.health, queryFn: healthApi.get, enabled: localEnvironment });
+  const health = useQuery({ queryKey: queryKeys.health, queryFn: healthApi.get, enabled: active && localEnvironment });
   const canUseLocalLogin = localEnvironment && (health.data?.localAiLoginSupported ?? health.data?.deploymentMode === "local_trusted");
   const epoch = useRef(0);
+  const activeRef = useRef(active);
+  activeRef.current = active;
+  useEffect(() => {
+    if (!active) {
+      epoch.current++;
+      setBusy(false);
+    }
+  }, [active]);
   useEffect(
     () => () => {
       epoch.current++;
@@ -101,7 +112,7 @@ export function AgentProviderConnection({
   const envKey =
     adapterType === "claude_local" ? "ANTHROPIC_API_KEY" : adapterType === "grok_local" ? "XAI_API_KEY" : "OPENAI_API_KEY";
   const aiProvider = adapterType === "claude_local" ? "anthropic" : adapterType === "grok_local" ? "xai" : "openai";
-  const availableKeys = useSavedProviderKeys(companyId, envKey);
+  const availableKeys = useSavedProviderKeys(companyId, envKey, active);
   // Add/reconnect creates the requested account, never copies a saved account's
   // credential or silently changes its ownership. Agent setup retains reuse.
   const savedKeys = managedAccount
@@ -143,7 +154,7 @@ export function AgentProviderConnection({
   const localLogin = useLocalAiLogin(companyId, managedIntent ?? {
     provider: aiProvider, method: "subscription", name: `My ${provider} subscription`,
     ownership: "personal", agentIds: [], allAgents: true,
-  }, !advanced && canUseLocalLogin && method === "subscription" && !savedSubscription && !storedLogin.data,
+  }, active && !advanced && canUseLocalLogin && method === "subscription" && !savedSubscription && !storedLogin.data,
   );
   const auth = useQuery({
     queryKey: queryKeys.agents.authSignal(
@@ -158,10 +169,10 @@ export function AgentProviderConnection({
         environmentId ?? undefined,
       ),
     retry: false,
-    enabled: !managedAccount && !advanced,
+    enabled: active && !managedAccount && !advanced,
   });
   async function connect() {
-    if (busy || managedAccount?.disabled) return;
+    if (!activeRef.current || busy || managedAccount?.disabled) return;
     const run = ++epoch.current;
     setBusy(true);
     setError(null);
@@ -248,6 +259,7 @@ export function AgentProviderConnection({
     setStoredConnection(null);
     setError(null);
   };
+  if (!active) return null;
   return (
     <div className="min-w-0 max-w-full">
       <ModelSourceTiles
@@ -379,6 +391,7 @@ export function AgentProviderConnection({
                   setLoginPhase((phase) => phase === "connecting" ? phaseBeforeSubmit.current : phase);
                 }}
                 onConnected={(sessionId) => {
+                  if (!activeRef.current) return;
                   if (managedAccount) {
                     if (!sessionId) { setError("The login did not return a saved connection. Try again."); return; }
                     const run = epoch.current;

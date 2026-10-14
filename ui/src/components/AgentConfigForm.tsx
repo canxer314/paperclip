@@ -28,13 +28,14 @@ import { ApiError } from "../api/client";
 import { environmentsApi } from "../api/environments";
 import { instanceSettingsApi } from "../api/instanceSettings";
 import { secretsApi } from "../api/secrets";
-import { accessApi } from "../api/access";
+import { ClaudeConfigurationSourceField } from "./ClaudeConfigurationSourceField";
+import { claudeHostModels } from "../lib/claude-host-models";
 import { assetsApi } from "../api/assets";
 import {
   DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
   DEFAULT_CODEX_LOCAL_MODEL,
 } from "@paperclipai/adapter-codex-local";
-import { DEFAULT_CLAUDE_LOCAL_MODEL, models as claudeStaticModels } from "@paperclipai/adapter-claude-local";
+import { DEFAULT_CLAUDE_LOCAL_MODEL } from "@paperclipai/adapter-claude-local";
 import { DEFAULT_CURSOR_LOCAL_MODEL } from "@paperclipai/adapter-cursor-local";
 import { DEFAULT_GEMINI_LOCAL_MODEL } from "@paperclipai/adapter-gemini-local";
 import { DEFAULT_KIMI_LOCAL_MODEL } from "@paperclipai/adapter-kimi-local";
@@ -641,16 +642,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
   // before either callback can flush and persist it.
   const claudeLoginAllowedRef = useRef(claudeLoginAllowed);
   claudeLoginAllowedRef.current = claudeLoginAllowed;
-  const permissionCompanyId = isCreate ? selectedCompanyId : props.agent.companyId;
-  const hostPermission = useQuery({
-    queryKey: queryKeys.access.companyClaudeHostAccess(permissionCompanyId ?? "none"),
-    queryFn: () => accessApi.getClaudeHostAccess(permissionCompanyId!),
-    enabled: Boolean(permissionCompanyId) && !isCreate && adapterType === "claude_local" &&
-      (hostClaudeSource || savedClaudeSource === "host"),
-    retry: false,
-    refetchOnMount: "always",
-    refetchOnWindowFocus: "always",
-  });
+
 
   // Create mode holds the non-secret stored-session claim after a Claude
   // subscription login reaches the server `stored` state. The claim marks the
@@ -947,10 +939,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
   });
   const [refreshModelsError, setRefreshModelsError] = useState<string | null>(null);
   const [refreshingModels, setRefreshingModels] = useState(false);
-  const models = hostClaudeSource ? [
-    { id: "opus", label: "opus" }, { id: "sonnet", label: "sonnet" }, { id: "haiku", label: "haiku" },
-    ...claudeStaticModels,
-  ] : connectionModels?.models ?? fetchedModels ?? externalModels ?? [];
+  const models = hostClaudeSource ? claudeHostModels : connectionModels?.models ?? fetchedModels ?? externalModels ?? [];
   const modelError = hostClaudeSource ? null : connectionModels ? connectionModels.error : fetchedModelsError;
   const adapterCommandField = "command";
   const {
@@ -1773,29 +1762,12 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
           )}
 
           {!isCreate && adapterType === "claude_local" && (
-            <Field label="Configuration source" hint="Chooses the automatic authentication preparation for Claude Code.">
-              <NativeSelect aria-label="Configuration source" value={String(claudeSource)}
-                onChange={event => mark("adapterConfig", "configurationSource", event.target.value)}>
-                <option value="paperclip">Paperclip</option>
-                <option value="host">Server Claude Code configuration</option>
-              </NativeSelect>
-              <div className="mt-2 space-y-2 text-xs text-muted-foreground">
-                <p>Saved configuration source: {savedClaudeSource === "host" ? "Server Claude Code configuration" : "Paperclip"}</p>
-                <p>The server is Paperclip's execution host and service user, not your browser computer. Agent env and advanced arguments may override native configuration; this choice does not prove which account is used.</p>
-                <p>Native hooks and helpers may execute. Paperclip constructs default MCP, permissions and task sessions; operators are responsible for advanced override compatibility. <a className="underline" href="https://github.com/canxer314/paperclip/blob/master/doc/claude-local-checks.md" target="_blank" rel="noreferrer">Configuration boundaries</a></p>
-                <p>Stop the Agent and wait for current runs to finish before switching. Save does not stop current runs.</p>
-                {claudeSource !== savedClaudeSource && <p>Save the source switch before using Paperclip login. Login does not apply a different source draft.</p>}
-                {(hostClaudeSource || savedClaudeSource === "host") && (
-                  <div role={hostPermission.isError ? "alert" : "status"} className="space-y-2">
-                    <p>{hostPermission.isError ? "Could not load company permission. Retry the permission query." :
-                      hostPermission.isFetching ? "Loading company permission…" :
-                      hostPermission.data?.enabled === true ? "Company permission: allowed" : "Company permission: not granted"}</p>
-                    <p>Contact your instance administrator to manage permission. Permission is required for checks and new runs, not for saving configuration.</p>
-                    {hostPermission.isError && <Button type="button" variant="ghost" size="sm" onClick={() => void hostPermission.refetch()}>Retry permission query</Button>}
-                  </div>
-                )}
-              </div>
-            </Field>
+            <ClaudeConfigurationSourceField
+              companyId={props.agent.companyId}
+              value={claudeSource}
+              savedValue={savedClaudeSource}
+              onChange={source => mark("adapterConfig", "configurationSource", source)}
+            />
           )}
           {renderAdapterFields("adapter")}
           {isLocal && (<>
