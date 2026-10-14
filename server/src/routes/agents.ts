@@ -5365,7 +5365,11 @@ export function agentRoutes(
     const nextClaudeHostSource = requestedAdapterType === "claude_local" && resolveClaudeConfigurationSource(
       (patchData.adapterConfig ?? existing.adapterConfig) as Record<string, unknown>,
     ) === "host";
-    const previousAiBinding = aiRuntimeConnectionBindingSchema.safeParse(existing.runtimeConfig.aiConnection).data;
+    // Normalize only the inactive host binding. Keep the legacy validation
+    // trigger unchanged when saving the Paperclip source.
+    const previousAiBinding = nextClaudeHostSource
+      ? aiRuntimeConnectionBindingSchema.safeParse(existing.runtimeConfig.aiConnection).data
+      : existing.runtimeConfig.aiConnection;
     const aiBindingChanged = JSON.stringify(nextAiBinding) !== JSON.stringify(previousAiBinding);
     const returningToPaperclip = requestedAdapterType === "claude_local" && !nextClaudeHostSource &&
       existing.adapterType === "claude_local" && resolveClaudeConfigurationSource(existing.adapterConfig) === "host";
