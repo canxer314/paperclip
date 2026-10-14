@@ -771,6 +771,16 @@ describe("AgentConfigForm environment selector", () => {
     expect(patch.adapterConfig.configurationSource).toBe("paperclip");
   });
 
+  it("describes an unset host engine as CLI and retains the Paperclip default when switching back", async () => {
+    const result = await renderForm([], { adapterType: "claude_local", adapterConfig: { configurationSource: "host" } });
+    roots.push(result.root);
+    expect(result.container.textContent).toContain("Default (CLI)");
+    await selectClaudeSource(result.container, "paperclip");
+    expect(result.container.textContent).toContain("Default (ACP)");
+    await clickByText(result.container, "Save");
+    expect(result.onSave.mock.calls[0][0].adapterConfig.engine).toBeUndefined();
+  });
+
   beforeEach(() => {
     mockAgentsApi.adapterModels.mockResolvedValue([]);
     mockAgentsApi.detectModel.mockResolvedValue(null);

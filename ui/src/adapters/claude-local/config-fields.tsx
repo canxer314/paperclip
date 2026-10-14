@@ -9,6 +9,7 @@ import {
 } from "../../components/agent-config-primitives";
 import { ChoosePathButton } from "../../components/PathInstructionsModal";
 import { LocalWorkspaceRuntimeFields } from "../local-workspace-runtime-fields";
+import { resolveClaudeConfigurationSource } from "@paperclipai/shared";
 
 const inputClass =
   "w-full rounded-md border border-border px-2.5 py-1.5 bg-transparent outline-none text-sm font-mono placeholder:text-muted-foreground/40";
@@ -87,6 +88,9 @@ export function ClaudeLocalAdvancedFields({
     : eff("adapterConfig", "engine", String(config.engine ?? "auto"));
   const engine = rawEngine === "acp" || rawEngine === "cli" ? rawEngine : "auto";
   const acpSelected = engine === "acp";
+  const hostSource = isCreate
+    ? resolveClaudeConfigurationSource(values!.adapterSchemaValues ?? {}) === "host"
+    : eff("adapterConfig", "configurationSource", resolveClaudeConfigurationSource(config)) === "host";
 
   return configFieldsForSection(section, (
     <>
@@ -96,7 +100,9 @@ export function ClaudeLocalAdvancedFields({
         environment owns both, so the managed-sandbox-only policy hides them,
         the same way `runnerManaged` hides them for the Paperclip Runner.
       */}
-      {!managedSandboxOnly && <Field label="Execution engine" hint="Default uses ACP. If ACP is unavailable, the run fails with a setup error. Choose CLI explicitly to use it.">
+      {!managedSandboxOnly && <Field label="Execution engine" hint={hostSource
+        ? "Host source uses CLI when the engine is unset. Explicit ACP or auto settings are unsupported; choose Claude CLI or leave the engine unset."
+        : "Default uses ACP. If ACP is unavailable, the run fails with a setup error. Choose CLI explicitly to use it."}>
         <select
           className={inputClass}
           value={engine}
@@ -107,7 +113,7 @@ export function ClaudeLocalAdvancedFields({
               : mark("adapterConfig", "engine", value === "auto" ? undefined : value);
           }}
         >
-          <option value="auto">Default (ACP)</option>
+          <option value="auto">{hostSource ? "Default (CLI)" : "Default (ACP)"}</option>
           <option value="cli">Claude CLI</option>
           <option value="acp">ACP</option>
         </select>
