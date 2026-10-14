@@ -1779,11 +1779,13 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
               model={String(props.agent.adapterConfig.model ?? "").trim()}
               disabled={isSavePending || testActionPending || selectedCompanyId !== props.agent.companyId}
               hasDraft={environmentDraftDirty || adapterType !== props.agent.adapterType
-                || !overlayValuesEqual({ ...config, ...overlay.adapterConfig }, config) || Object.keys(overlay.runtime).length > 0}
+                || !overlayValuesEqual({ ...config, ...overlay.adapterConfig }, config) || Object.keys(overlay.runtime).length > 0
+                || ("defaultEnvironmentId" in overlay.identity && overlay.identity.defaultEnvironmentId !== props.agent.defaultEnvironmentId)}
               context={JSON.stringify({ companyId: selectedCompanyId, agentId: props.agent.id,
                 config: props.agent.adapterConfig, runtime: props.agent.runtimeConfig, environment: props.agent.defaultEnvironmentId,
                 lifecycle: props.agent.lifecycleState, permissions: props.agent.permissions, adapterType,
-                draft: overlay.adapterConfig, runtimeDraft: overlay.runtime, environmentDraftDirty })}
+                draft: overlay.adapterConfig, runtimeDraft: overlay.runtime, environmentDraftDirty,
+                environmentDraft: overlay.identity.defaultEnvironmentId })}
             />
           )}
           {renderAdapterFields("adapter")}
