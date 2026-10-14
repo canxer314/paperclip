@@ -107,8 +107,9 @@ export async function accountRunCost(db: Db, runId: string, hooks: BudgetService
     const parts = Array.isArray(usage.usageByModel) ? usage.usageByModel.map(object) : [];
     const tokensMatch = ["inputTokens", "cachedInputTokens", "outputTokens"].every((key) =>
       parts.reduce((sum, part) => sum + (amount(object(part.usage)[key]) ?? 0), 0) === (amount(usage[key]) ?? 0));
-    const costMatches = costUsd !== null && parts.reduce((sum, part) => sum + usdToUnits(amount(part.costUsd) ?? 0), 0n) === usdToUnits(costUsd);
-    const validParts = parts.length > 0 && tokensMatch && (hostExternalUntracked || costMatches)
+    const costMatches = hostExternalUntracked || (costUsd !== null
+      && parts.reduce((sum, part) => sum + usdToUnits(amount(part.costUsd) ?? 0), 0n) === usdToUnits(costUsd));
+    const validParts = parts.length > 0 && tokensMatch && costMatches
       && parts.every((part) => text(part.model) && amount(part.costUsd) !== null)
       && new Set(parts.map((part) => part.model)).size === parts.length;
     if (validParts) {
@@ -116,7 +117,7 @@ export async function accountRunCost(db: Db, runId: string, hooks: BudgetService
       for (const [index, part] of parts.entries()) {
         const partUsage = object(part.usage);
         const remainder = costUnits - allocated;
-        const reported = usdToUnits(amount(part.costUsd) ?? 0);
+        const reported = hostExternalUntracked ? 0n : usdToUnits(amount(part.costUsd) ?? 0);
         const partUnits = hostExternalUntracked || billingType === "subscription_included" ? 0n : index === parts.length - 1 ? remainder : reported < remainder ? reported : remainder;
         allocated += partUnits;
         const partCents = unitsToCents(partUnits);

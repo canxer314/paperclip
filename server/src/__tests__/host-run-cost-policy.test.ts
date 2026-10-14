@@ -159,6 +159,16 @@ describeDatabase("host run cost policy", () => {
     expect(event).toMatchObject({ model: "claude-sonnet-4", costStatus: "reported", inputTokens: 10, cachedInputTokens: 20, outputTokens: 3 });
   });
 
+  it("does not convert a CLI reference outside ledger monetary bounds", async () => {
+    const { runId } = await fixture({ costPolicy: "host_external_untracked_v1", provider: "anthropic", model: "claude-sonnet-4",
+      costUsd: 1e20, inputTokens: 10, cachedInputTokens: 20, outputTokens: 3,
+      usageByModel: [{ model: "claude-sonnet-4", costUsd: 1e20, usage: { inputTokens: 10, cachedInputTokens: 20, outputTokens: 3 } }] });
+    expect(await accountRunCost(db, runId)).toBe(true);
+    const [event] = await db.select().from(costEvents).where(eq(costEvents.heartbeatRunId, runId));
+    expect(Number(event.costCents)).toBe(0);
+    expect((await heartbeat.getRun(runId))?.usageJson?.costUsd).toBe(1e20);
+  });
+
   it.each([{ accountingReceiptReady: false }, { accountingCaptureFailed: true }])(
     "leaves incomplete host accounting pending: %j", async incomplete => {
       const { runId } = await fixture({ costPolicy: "host_external_untracked_v1", costUsd: 5, ...incomplete });

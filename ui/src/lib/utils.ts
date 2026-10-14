@@ -175,7 +175,7 @@ function coerceBillingType(value: unknown): BillingType | null {
   return null;
 }
 
-export function readRunCostUsd(payload: Record<string, unknown> | null): number | null {
+function readRunCostUsd(payload: Record<string, unknown> | null): number | null {
   if (!payload) return null;
   for (const key of ["cacheAdjustedCostUsd", "costUsdExact", "costUsd", "cost_usd", "total_cost_usd"] as const) {
     const value = payload[key];
