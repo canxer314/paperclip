@@ -14,13 +14,19 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, MotionConfig, motion } from "motion/react";
 import type {
   AdapterEnvironmentTestResult,
+  Agent,
   AgentRole,
   ClaudeOAuthTokenStatusResponse,
   Environment,
+  EnvBinding,
   InstanceSettings,
 } from "@paperclipai/shared";
-import { AGENT_ROLES, AGENT_ROLE_LABELS, ADAPTER_AUTH_MISSING_CHECK_CODE } from "@paperclipai/shared";
-import { AdapterLoginPanel } from "./AgentConfigForm";
+import { AGENT_ROLES, AGENT_ROLE_LABELS, ADAPTER_AUTH_MISSING_CHECK_CODE, resolveClaudeConfigurationSource } from "@paperclipai/shared";
+import { AdapterLoginPanel, ModelDropdown } from "./AgentConfigForm";
+import { ClaudeConfigurationSourceField } from "./ClaudeConfigurationSourceField";
+import { claudeHostModels } from "../lib/claude-host-models";
+import { EnvironmentVariablesEditor, type EnvironmentVariablesEditorHandle } from "./environment-variables-editor";
+import { RuntimeTestCard } from "./RuntimeTestCard";
 import {
   CONNECT_SOURCE_NAMES,
   OnboardingCardField,
@@ -83,7 +89,7 @@ import {
   PopoverTrigger
 } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
-import { cn } from "../lib/utils";
+import { agentUrl, cn } from "../lib/utils";
 import {
   extractModelName,
   extractProviderIdWithFallback
@@ -596,6 +602,11 @@ function OnboardingWizardInner({
   const [adapterType, setAdapterType] = useState<AdapterType>(() =>
     restoreOnboardingAdapterType(saved?.adapterType),
   );
+  const [configurationSource, setConfigurationSource] = useState(() => resolveClaudeConfigurationSource(saved ?? {}));
+  const hostClaudeSource = adapterType === "claude_local" && configurationSource === "host";
+  // Environment values can contain credentials. Keep these drafts in memory.
+  const [envBindings, setEnvBindings] = useState<Record<string, EnvBinding>>({});
+  const envEditor = useRef<EnvironmentVariablesEditorHandle>(null);
   /**
    * Whether a model source has been chosen, as opposed to which one
    * `adapterType` happens to hold.
@@ -697,8 +708,18 @@ function OnboardingWizardInner({
   const savedKeys = useSavedProviderKeys(
     createdCompanyId,
     apiKeyEnvKeyFor(adapterType),
-    effectiveOnboardingOpen && step === 4,
+    effectiveOnboardingOpen && step === 4 && !hostClaudeSource,
   );
+  const envSecrets = useQuery({
+    queryKey: queryKeys.secrets.list(createdCompanyId ?? ""),
+    queryFn: () => secretsApi.list(createdCompanyId!),
+    enabled: Boolean(createdCompanyId) && effectiveOnboardingOpen && step === 4 && adapterType === "claude_local",
+  });
+  const envUserSecrets = useQuery({
+    queryKey: queryKeys.secrets.myUserSecrets(createdCompanyId ?? ""),
+    queryFn: () => secretsApi.listMyUserSecrets(createdCompanyId!),
+    enabled: Boolean(createdCompanyId) && effectiveOnboardingOpen && step === 4 && adapterType === "claude_local",
+  });
   // The chooser is absent in onboarding. Prefer the user's explicit default;
   // otherwise only reuse an unambiguous account, regardless of list ordering.
   const savedSubscription = savedKeys.subscriptions.find((option) => option.aiConnection?.mode === "responsible_user")
@@ -716,6 +737,18 @@ function OnboardingWizardInner({
     string | null
   >((saved?.createdCompanyPrefix as string) ?? null);
   const [createdAgentId, setCreatedAgentId] = useState<string | null>((saved?.createdAgentId as string) ?? null);
+  const [createdHostAgent, setCreatedHostAgent] = useState<Agent | null>(null);
+  const savedHostAgentQuery = useQuery({
+    queryKey: queryKeys.agents.detail(createdAgentId ?? "onboarding-new"),
+    queryFn: () => agentsApi.get(createdAgentId!, createdCompanyId!),
+    enabled: Boolean(createdCompanyId && createdAgentId && hostClaudeSource),
+    retry: false,
+    refetchInterval: query => ["preparing", "verifying"].includes(query.state.data?.lifecycleState ?? "") ? 2500 : false,
+  });
+  const savedHostAgent = savedHostAgentQuery.data?.companyId === createdCompanyId
+    ? savedHostAgentQuery.data
+    : createdHostAgent?.companyId === createdCompanyId ? createdHostAgent : null;
+  const hostConfigurationSaved = hostClaudeSource && Boolean(createdAgentId);
   const [createdCompanyGoalId, setCreatedCompanyGoalId] = useState<string | null>(
     (saved?.createdCompanyGoalId as string) ?? null
   );
@@ -753,6 +786,7 @@ function OnboardingWizardInner({
   // the binding cannot answer for a config that now does — see the reuse
   // check in `handleGiveHeartbeat`.
   const adapterEnvResultAppliedStoredLoginRef = useRef(false);
+  const localCheckAttemptRef = useRef(0);
   /**
    * The secret a key typed on this step was stored as, remembered for the key it
    * holds. Connect can be pressed more than once — a hire that fails leaves the
@@ -764,6 +798,7 @@ function OnboardingWizardInner({
   const managedProvider = aiProviderForAdapter(adapterType);
   const managedSubscriptionProvider = managedProvider === "anthropic" || managedProvider === "openai" || managedProvider === "xai" ? managedProvider : undefined;
   function managedBindingForStep(): AiConnectionBinding | undefined {
+    if (hostClaudeSource) return undefined;
     if (credentialMode === "api") return selectedApiKey?.aiConnection ?? (
       !selectedApiKey && apiKeySecretRef.current?.companyId === createdCompanyId && apiKeySecretRef.current.envKey === apiKeyEnvKeyFor(adapterType)
         ? apiKeySecretRef.current.aiConnection : undefined);
@@ -807,6 +842,8 @@ function OnboardingWizardInner({
     setCreatedProjectId(null);
     setCreatedIssueRef(null);
     setCreatedAgentId(null);
+    setCreatedHostAgent(null);
+    setEnvBindings({});
   }
 
   // Sync step and company when onboarding opens with explicit options.
@@ -904,7 +941,7 @@ function OnboardingWizardInner({
     if (!effectiveOnboardingOpen) return;
     const state = {
       step, companyName,
-      agentName, agentAppearance, agentRole, adapterType, cwd, model, command, args, url,
+      agentName, agentAppearance, agentRole, adapterType, configurationSource, cwd, model, command, args, url,
       // The mode, never the key: this blob is localStorage.
       credentialMode, credentialModeChoice,
       createdCompanyId, createdCompanyPrefix, createdAgentId,
@@ -913,7 +950,7 @@ function OnboardingWizardInner({
     onboardingDraftStorage.write(JSON.stringify(state));
   }, [
     effectiveOnboardingOpen, step, companyName,
-    agentName, agentAppearance, agentRole, adapterType, cwd, model, command, args, url,
+    agentName, agentAppearance, agentRole, adapterType, configurationSource, cwd, model, command, args, url,
     credentialMode, credentialModeChoice,
     createdCompanyId, createdCompanyPrefix, createdAgentId,
     createdCompanyGoalId, createdProjectId, createdIssueRef,
@@ -932,7 +969,7 @@ function OnboardingWizardInner({
       : ["agents", "none", "adapter-models", adapterType, null],
     queryFn: () => agentsApi.adapterModels(createdCompanyId!, adapterType, { environmentId: null }),
     // Models are picked on step 4 (Connect a model).
-    enabled: Boolean(createdCompanyId) && effectiveOnboardingOpen && step === 4
+    enabled: Boolean(createdCompanyId) && effectiveOnboardingOpen && step === 4 && !hostClaudeSource
   });
   const getCapabilities = useAdapterCapabilities();
   const adapterCaps = getCapabilities(adapterType);
@@ -1015,7 +1052,7 @@ function OnboardingWizardInner({
   // input here, so this gate alone only decides whether the login mechanism
   // could ever apply to the current adapter and environment.
   const localLoginHealth = useQuery({ queryKey: queryKeys.health, queryFn: healthApi.get });
-  const canUseLocalLogin = Boolean(managedSubscriptionProvider) && resolvedLoginEnvironment?.driver === "local" && (localLoginHealth.data?.localAiLoginSupported ?? localLoginHealth.data?.deploymentMode === "local_trusted");
+  const canUseLocalLogin = !hostClaudeSource && Boolean(managedSubscriptionProvider) && resolvedLoginEnvironment?.driver === "local" && (localLoginHealth.data?.localAiLoginSupported ?? localLoginHealth.data?.deploymentMode === "local_trusted");
   const localLogin = useLocalAiLogin(createdCompanyId, {
     provider: managedSubscriptionProvider ?? "anthropic", method: "subscription",
     name: `My ${CONNECT_SOURCE_NAMES[adapterType] ?? managedProvider} subscription`,
@@ -1034,10 +1071,10 @@ function OnboardingWizardInner({
       setAdapterEnvLoading(false);
     }
     return () => { connectAttemptRef.current++; };
-  }, [effectiveOnboardingOpen, createdCompanyId, adapterType, credentialMode, step]);
+  }, [effectiveOnboardingOpen, createdCompanyId, adapterType, configurationSource, credentialMode, step]);
 
   const canShowAdapterLogin = Boolean(
-    adapterCaps.login != null &&
+    !hostClaudeSource && adapterCaps.login != null &&
       resolvedLoginEnvironment?.driver === "sandbox" &&
       resolvedLoginEnvironmentId &&
       createdCompanyId &&
@@ -1094,7 +1131,7 @@ function OnboardingWizardInner({
       Boolean(createdCompanyId) && effectiveOnboardingOpen && step === 4 && canShowAdapterLogin,
   });
   useEffect(() => {
-    if (!activeLoginSessionQuery.data || credentialMode === "api" || savedSubscription || savedKeys.storedLogin.data) return;
+    if (hostClaudeSource || !activeLoginSessionQuery.data || credentialMode === "api" || savedSubscription || savedKeys.storedLogin.data) return;
     // Re-derive the row's answer along with the sequence: a resumed session
     // implies a source was already picked, and the row stays a question
     // otherwise (see `sourcePicked` above).
@@ -1105,7 +1142,7 @@ function OnboardingWizardInner({
     // prompt through `onPromptReady`, below, which is what moves this beat
     // from `loading` to `ready`, exactly as a fresh press would.
     setConnectPhase((phase) => (phase === "idle" ? "loading" : phase));
-  }, [activeLoginSessionQuery.data, credentialMode, savedSubscription, savedKeys.storedLogin.data]);
+  }, [hostClaudeSource, activeLoginSessionQuery.data, credentialMode, savedSubscription, savedKeys.storedLogin.data]);
   /**
    * The signal is being fetched and has not answered yet.
    *
@@ -1174,7 +1211,7 @@ function OnboardingWizardInner({
    * Anything that gates this step belongs in here, so the next one is added
    * once rather than twice.
    */
-  const connectStepReady = sourceSelected && !adapterEnvLoading && !savedKeys.loading;
+  const connectStepReady = hostClaudeSource || (sourceSelected && !adapterEnvLoading && !savedKeys.loading);
 
   /**
    * Whether this step has a sign-in to do before it can hire.
@@ -1185,7 +1222,7 @@ function OnboardingWizardInner({
    * sandbox, or a local CLI account — Connect verifies credentials before the hire.
    */
   const connectStepNeedsLogin = Boolean(
-    credentialMode !== "api" &&
+    !hostClaudeSource && credentialMode !== "api" &&
       // Connection-list invalidation can arrive before the login's completion
       // poll. Keep its controller mounted until it reports success; otherwise
       // the saved account replaces the panel and "Connecting" never finishes.
@@ -1279,7 +1316,7 @@ function OnboardingWizardInner({
   // chosen Claude or Codex. A saved-list refresh during that work is not a new
   // attempt, and a failed attempt waits for an explicit Connect retry.
   useEffect(() => {
-    if (!effectiveOnboardingOpen || step !== 4 || connectPhase !== "ready" ||
+    if (hostClaudeSource || !effectiveOnboardingOpen || step !== 4 || connectPhase !== "ready" ||
         !connectStepReady || connectStepNeedsLogin || connectCredentialStored ||
         credentialMode !== "subscription" ||
         (adapterType !== "claude_local" && adapterType !== "codex_local") ||
@@ -1287,7 +1324,7 @@ function OnboardingWizardInner({
         loading || autoConnectStartedRef.current) return;
     autoConnectStartedRef.current = true;
     void handleGiveHeartbeat();
-  }, [effectiveOnboardingOpen, step, connectPhase, connectStepReady, connectStepNeedsLogin,
+  }, [hostClaudeSource, effectiveOnboardingOpen, step, connectPhase, connectStepReady, connectStepNeedsLogin,
     connectCredentialStored, credentialMode, adapterType, hasSavedSubscription, localLogin.status, loading]);
 
   /**
@@ -1297,7 +1334,7 @@ function OnboardingWizardInner({
    * on a timer, so the card waits exactly as long as the login actually takes.
    */
   useEffect(() => {
-    if (step !== 4) return;
+    if (step !== 4 || hostClaudeSource) return;
     if (connectPhase === "collapsing") {
       const t = setTimeout(
         // A key has nothing to fetch — the field exists the moment the source
@@ -1356,7 +1393,7 @@ function OnboardingWizardInner({
       return () => clearTimeout(t);
     }
     return;
-  }, [step, connectPhase, credentialMode, connectStepNeedsLogin, connectCredentialStored]);
+  }, [step, hostClaudeSource, connectPhase, credentialMode, connectStepNeedsLogin, connectCredentialStored]);
 
   /**
    * The button's four faces, and which of them can be pressed.
@@ -1368,7 +1405,8 @@ function OnboardingWizardInner({
    */
   const connectSourceLabel = CONNECT_SOURCE_NAMES[adapterType] ?? adapterType;
   const connectCta: { label: string; icon: FooterPrimaryIcon; disabled: boolean } =
-    connectProgress
+    hostClaudeSource ? { label: loading ? "Saving…" : "Save Agent", icon: loading ? "spinner" : "arrow", disabled: loading }
+      : connectProgress
       ? { label: adapterEnvLoading ? "Testing…" : connectProgress, icon: "spinner", disabled: true }
       : connectPhase === "waiting"
       ? { label: "Waiting for code", icon: "spinner", disabled: true }
@@ -1429,6 +1467,10 @@ function OnboardingWizardInner({
    * it is meant to start, against a source with no credential.
    */
   function handleConnectStepPrimary() {
+    if (hostClaudeSource) {
+      void handleGiveHeartbeat();
+      return;
+    }
     // Mid-sequence the button belongs to the sign-in, not to the step.
     if (connectPhase === "ready" && connectStepNeedsLogin) {
       if (connectAuthUrl) window.open(connectAuthUrl, "_blank", "noreferrer,noopener");
@@ -1537,11 +1579,14 @@ function OnboardingWizardInner({
   // press Connect again, and without these two the wizard would hire against a
   // key nothing ever tested.
   useEffect(() => {
+    localCheckAttemptRef.current++;
     if (step !== 4) return;
     setAdapterEnvResult(null);
     adapterEnvResultAppliedStoredLoginRef.current = false;
     setAdapterEnvError(null);
-  }, [step, adapterType, model, command, args, url, credentialMode, apiKey, selectedSavedKey, selectedApiKey?.id, savedSubscription?.id]);
+    if (hostClaudeSource) setAdapterEnvLoading(false);
+    return () => { localCheckAttemptRef.current++; };
+  }, [effectiveOnboardingOpen, createdCompanyId, step, adapterType, configurationSource, model, command, args, url, envBindings, credentialMode, apiKey, selectedSavedKey, selectedApiKey?.id, savedSubscription?.id]);
 
   /**
    * Leaving the step puts the row back to a question.
@@ -1628,6 +1673,8 @@ function OnboardingWizardInner({
     setAgentAppearance(randomAgentAppearance());
     setAgentRole(DEFAULT_AGENT_ROLE);
     setAdapterType("claude_local");
+    setConfigurationSource("paperclip");
+    setEnvBindings({});
     setModel("");
     setCommand("");
     setArgs("");
@@ -1642,6 +1689,7 @@ function OnboardingWizardInner({
     setCreatedCompanyId(null);
     setCreatedCompanyPrefix(null);
     setCreatedAgentId(null);
+    setCreatedHostAgent(null);
     setCreatedCompanyGoalId(null);
     setCreatedProjectId(null);
     setCreatedIssueRef(null);
@@ -1697,6 +1745,13 @@ function OnboardingWizardInner({
   async function handleLaunchToDashboard() {
     if (!createdCompanyId || !createdAgentId) {
       setError(INCOMPLETE_ONBOARDING_STATE_MESSAGE);
+      return;
+    }
+    if (hostConfigurationSaved) {
+      const destination = `${createdCompanyPrefix ? `/${createdCompanyPrefix}` : ""}${agentUrl(savedHostAgent ?? { id: createdAgentId })}`;
+      setSelectedCompanyId(createdCompanyId, { source: "route_sync" });
+      handleClose();
+      navigate(destination);
       return;
     }
     setLoading(true);
@@ -1816,11 +1871,13 @@ function OnboardingWizardInner({
     }
   }
 
-  function buildAdapterConfig(bindApiKey = false): Record<string, unknown> {
+  function buildAdapterConfig(bindApiKey = false, agentEnv = envBindings): Record<string, unknown> {
     const adapter = getUIAdapter(adapterType);
     const config = adapter.buildAdapterConfig({
       ...defaultCreateValues,
       adapterType,
+      ...(adapterType === "claude_local" ? { envBindings: agentEnv } : {}),
+      ...(hostClaudeSource ? { cwd } : {}),
       model:
         adapterType === "gemini_local"
           ? model || DEFAULT_GEMINI_LOCAL_MODEL
@@ -1841,6 +1898,7 @@ function OnboardingWizardInner({
           ? DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX
           : defaultCreateValues.dangerouslyBypassSandbox
     });
+    if (hostClaudeSource) return { ...config, configurationSource: "host" };
     if (adapterType === "claude_local" && forceUnsetAnthropicApiKey) {
       const env =
         typeof config.env === "object" &&
@@ -1952,6 +2010,7 @@ function OnboardingWizardInner({
         adapterType,
         {
           adapterConfig: adapterConfigOverride ?? buildAdapterConfig(),
+          ...(hostClaudeSource ? { purpose: "local-check" as const } : {}),
           ...(managedBindingForStep() ? { aiConnection: managedBindingForStep() } : {}),
           environmentId,
         }
@@ -1969,6 +2028,15 @@ function OnboardingWizardInner({
     } finally {
       if (isCurrent()) setAdapterEnvLoading(false);
     }
+  }
+
+  async function checkHostLocalConditions() {
+    if (adapterEnvLoading || loading) return;
+    const config = buildAdapterConfig(false, envEditor.current?.flushPendingDraft() ?? envBindings);
+    const attempt = ++localCheckAttemptRef.current;
+    const isCurrent = () => localCheckAttemptRef.current === attempt && stillTheSameCompany(createdCompanyId);
+    setAdapterEnvResult(null);
+    await runAdapterEnvironmentTest(config, false, isCurrent);
   }
 
   // Step 1 → 3 ("Name your organization"): create the organization, then go
@@ -2038,6 +2106,7 @@ function OnboardingWizardInner({
     autoConnectStartedRef.current = true;
     setLoading(true);
     setError(null);
+    let savedHostRecord: Agent | null = null;
     try {
       if (adapterType === "opencode_local") {
         const selectedModelId = model.trim();
@@ -2090,7 +2159,7 @@ function OnboardingWizardInner({
       // hire describe it the same way — as a reference. A failure here stops the
       // hire rather than falling through to a configuration with no credential.
       let apiKeyStored = false;
-      if (credentialMode === "api" && !selectedApiKey && apiKey.trim()) {
+      if (!hostClaudeSource && credentialMode === "api" && !selectedApiKey && apiKey.trim()) {
         apiKeyStored = await storeApiKeyUserSecret(createdCompanyId);
         if (!apiKeyStored || !isCurrent()) return;
       }
@@ -2100,10 +2169,10 @@ function OnboardingWizardInner({
         managedSubscriptionRef.current = { companyId: createdCompanyId, binding: { provider: managedProvider, method: "subscription", mode: "responsible_user" } };
       }
       const managedBinding = managedBindingForStep();
-      const baseAdapterConfig = buildAdapterConfig(apiKeyStored);
+      const baseAdapterConfig = buildAdapterConfig(apiKeyStored, envEditor.current?.flushPendingDraft() ?? envBindings);
       let storedClaudeLogin: ClaudeOAuthTokenStatusResponse | null = null;
       if (
-        !managedBinding && adapterType === "claude_local" &&
+        !hostClaudeSource && !managedBinding && adapterType === "claude_local" &&
         !adapterConfigHasAnthropicApiKey(baseAdapterConfig)
       ) {
         try {
@@ -2128,7 +2197,7 @@ function OnboardingWizardInner({
           }
         : baseAdapterConfig;
 
-      if (isLocalAdapter) {
+      if (isLocalAdapter && !hostClaudeSource) {
         // A cached result is reusable only when it tested the same
         // configuration the hire below sends, and only when it does not
         // block the hire — see blocksAgentCreate. With the "Test now" card
@@ -2178,11 +2247,13 @@ function OnboardingWizardInner({
       const existing = existingAgents?.find(
         (agent) =>
           agent.name.trim().toLowerCase() === hireName.toLowerCase() &&
-          agent.adapterType === adapterType,
+          agent.adapterType === adapterType &&
+          (adapterType !== "claude_local" || resolveClaudeConfigurationSource(agent.adapterConfig ?? {}) === configurationSource),
       );
       if (existing) {
         if (!isCurrent()) return;
         setCreatedAgentId(existing.id);
+        if (hostClaudeSource) setCreatedHostAgent(existing);
         setAgentAppearance(resolveAgentAppearance(existing.appearance, existing.id));
         queryClient.invalidateQueries({
           queryKey: queryKeys.agents.list(createdCompanyId)
@@ -2210,11 +2281,20 @@ function OnboardingWizardInner({
         runtimeConfig: { ...buildNewAgentRuntimeConfig(), ...(managedBinding ? { aiConnection: managedBinding } : {}) }
       });
       if (!isCurrent()) return;
+      if (hostClaudeSource) {
+        // Creation is durable even when the separate approval request fails.
+        savedHostRecord = hire.agent;
+        setCreatedAgentId(hire.agent.id);
+        setCreatedHostAgent(hire.agent);
+      }
       if (hire.approval) {
         await approvalsApi.approve(
           hire.approval.id,
           "Approved during onboarding first-agent setup."
         );
+        if (hostClaudeSource) {
+          void queryClient.invalidateQueries({ queryKey: queryKeys.agents.detail(hire.agent.id) });
+        }
         queryClient.invalidateQueries({
           queryKey: queryKeys.approvals.list(createdCompanyId)
         });
@@ -2234,7 +2314,12 @@ function OnboardingWizardInner({
       setStep(5);
     } catch (err) {
       if (!isCurrent()) return;
-      setError(err instanceof Error ? err.message : "Failed to create agent");
+      if (savedHostRecord) {
+        setStep(5);
+        setError("Configuration saved. Approval did not complete. Open this Agent to review its approval state.");
+      } else {
+        setError(err instanceof Error ? err.message : "Failed to create agent");
+      }
     } finally {
       if (hiringAgentRef.current === attempt) hiringAgentRef.current = null;
       if (isCurrent()) setLoading(false);
@@ -2535,7 +2620,7 @@ function OnboardingWizardInner({
                           payoff, not a flourish along it. The sequence itself
                           is the studio's export; see OnboardingCharacter. */}
                       <div className="relative size-(--sz-160px)">
-                        <OnboardingCharacter appearance={agentAppearance} awake={step === 5} className="size-full" />
+                        <OnboardingCharacter appearance={agentAppearance} awake={step === 5 && !hostConfigurationSaved} className="size-full" />
                       </div>
                       <AgentPreview agentName={agentName} agentRole="" />
                     </motion.div>
@@ -2553,8 +2638,8 @@ function OnboardingWizardInner({
                             : step === 3
                               ? "Create your first agent"
                               : step === 4
-                                ? "Connect a model"
-                                : "Let's get started..."}
+                                ? hostClaudeSource ? "Configure Claude Code" : "Connect a model"
+                                : hostConfigurationSaved ? "Agent configuration saved" : "Let's get started..."}
                         </motion.span>
                       }
                     />
@@ -2576,8 +2661,8 @@ function OnboardingWizardInner({
                       <p className="pt-2 text-base leading-relaxed text-muted-foreground">
                         <motion.span key={step} {...titleSwapMotion} className="inline-block">
                           {step === 4
-                            ? "Paperclip works with your subscription or API keys."
-                            : `${agentName.trim() || "Your first agent"} is ready to work!`}
+                            ? hostClaudeSource ? "Use Claude Code configuration on the execution host." : "Paperclip works with your subscription or API keys."
+                            : hostConfigurationSaved ? "Saving configuration does not prove authentication or model availability." : `${agentName.trim() || "Your first agent"} is ready to work!`}
                         </motion.span>
                       </p>
                     </motion.div>
@@ -2662,6 +2747,65 @@ function OnboardingWizardInner({
               {/* Step 4: Connect a model — adapter + model + env check (capsule above) */}
               {step === 4 && (
                 <motion.div key="step-4" {...stepContentMotion} exit={stepHandoff ? stepContentMotion.exit : undefined} className="space-y-8">
+                  {adapterType === "claude_local" && createdCompanyId && <ClaudeConfigurationSourceField
+                    companyId={createdCompanyId}
+                    value={configurationSource}
+                    disabled={loading}
+                    onChange={source => {
+                      connectAttemptRef.current++;
+                      hiringAgentRef.current = null;
+                      setConfigurationSource(source);
+                      setError(null);
+                      setConnectAuthUrl(null);
+                      setConnectCredentialStored(false);
+                      setConnectPhase("idle");
+                    }}
+                  />}
+                  {hostClaudeSource && <fieldset disabled={loading} className="space-y-2">
+                    <ModelDropdown
+                      presentation="native"
+                      models={claudeHostModels}
+                      value={model}
+                      onChange={setModel}
+                      open={modelOpen}
+                      onOpenChange={setModelOpen}
+                      allowDefault required={false} groupByProvider={false} creatable
+                      defaultLabel="Native default"
+                    />
+                    <p className="text-xs text-muted-foreground">Static suggestions, not an account's available models. Native default uses Claude Code's native model configuration without an extra Paperclip model selection; env and advanced arguments may still specify a model.</p>
+                    <p className="text-sm text-muted-foreground">Save configuration first. Automatic verification and existing retries check local conditions only; native authentication and model availability remain untested.</p>
+                  </fieldset>}
+                  {adapterType === "claude_local" && createdCompanyId && <EnvironmentVariablesEditor
+                    ref={envEditor}
+                    value={envBindings}
+                    onChange={value => setEnvBindings(value ?? {})}
+                    onDirtyChange={dirty => {
+                      if (dirty && hostClaudeSource) {
+                        localCheckAttemptRef.current++;
+                        setAdapterEnvResult(null);
+                        setAdapterEnvError(null);
+                        setAdapterEnvLoading(false);
+                      }
+                    }}
+                    secrets={envSecrets.data ?? []}
+                    userSecretDefinitions={envUserSecrets.data?.map(entry => entry.definition)}
+                    onCreateSecret={async (name, value) => {
+                      const secret = await secretsApi.create(createdCompanyId, { name, value, provider: "local_encrypted" });
+                      void queryClient.invalidateQueries({ queryKey: queryKeys.secrets.list(createdCompanyId) });
+                      return secret;
+                    }}
+                    disabled={loading}
+                    hideDraftActions
+                  />}
+                  {hostClaudeSource && <RuntimeTestCard
+                    variant="local-check"
+                    state={adapterEnvLoading ? "running" : adapterEnvError ? "fail" : adapterEnvResult?.status ?? "idle"}
+                    result={adapterEnvResult}
+                    error={adapterEnvError}
+                    disabled={loading}
+                    onTest={() => void checkHostLocalConditions()}
+                  />}
+                  {!hostClaudeSource && <>
                   <div>
                     {/* Sources come from `recommendedAdapters`, not a list
                         written here — that filter is `recommended` in the
@@ -2692,8 +2836,11 @@ function OnboardingWizardInner({
                         autoConnectStartedRef.current = false;
                         setSourcePicked(true);
                         setAdapterType(id);
-                        if (id === "opencode_local") setModel(DEFAULT_OPENCODE_LOCAL_MODEL);
-                        else if (id !== "codex_local") setModel("");
+                        if (id !== adapterType) {
+                          setConfigurationSource("paperclip");
+                          if (id === "opencode_local") setModel(DEFAULT_OPENCODE_LOCAL_MODEL);
+                          else if (id !== "codex_local") setModel("");
+                        }
                         setConnectPhase("collapsing");
                       }}
                     />
@@ -2896,6 +3043,7 @@ function OnboardingWizardInner({
                     ) : null}
                   </motion.div>
 
+                  </>}
                   {/* Conditional adapter fields */}
                   {/* No model picker. Every adapter this step offers resolves
                       its own default (see buildAdapterConfig), so the picker
@@ -2917,7 +3065,7 @@ function OnboardingWizardInner({
                       the hire, because `handleGiveHeartbeat` clears it in its
                       `finally` after the early return — so a genuine block still
                       shows its checks, which is the whole reason this is here. */}
-                  {isLocalAdapter && !loading && (adapterEnvError || (adapterEnvResult && adapterEnvResult.status !== "pass")) && (
+                  {!hostClaudeSource && isLocalAdapter && !loading && (adapterEnvError || (adapterEnvResult && adapterEnvResult.status !== "pass")) && (
                     <div className="space-y-2 rounded-md border border-border p-3">
                       {adapterEnvError && (
                         <div className="rounded-md border border-destructive/30 bg-destructive/10 px-2.5 py-2 text-(length:--text-micro) text-destructive">
@@ -3054,11 +3202,17 @@ function OnboardingWizardInner({
               )}
               </AnimatePresence>
 
-              {/* Step 5: Review — lead is online (shared capsule above) */}
-              {/* Step 5: nothing. The heading names the agent and says it is
-                  ready, and the pill above has just woken to show it — a
-                  checklist restating those in three rows only asked the
-                  customer to audit work they watched happen. */}
+              {step === 5 && hostConfigurationSaved && <div className="space-y-3 text-sm">
+                <p>Saved configuration source: Server Claude Code configuration</p>
+                <p>{savedHostAgent?.status === "pending_approval"
+                  ? "Configuration saved. An organization administrator must approve this Agent before it can work."
+                  : savedHostAgent?.lifecycleState === "ready"
+                    ? "Configuration saved. Necessary local conditions passed; native authentication and model availability remain untested."
+                    : savedHostAgent?.lifecycleError || savedHostAgent?.status === "error"
+                      ? "Configuration saved. Local verification needs attention. Open this Agent to repair permission or the environment and continue existing local verification on the same record."
+                      : "Configuration saved. Local verification has not completed. Open this Agent to continue setup on the same record."}</p>
+                {savedHostAgentQuery.isError && <p role="alert" className="text-destructive">The Agent was saved, but its current verification state could not be loaded. Open the Agent to review it.</p>}
+              </div>}
 
               {/* Error */}
               {visibleError && (
@@ -3076,7 +3230,7 @@ function OnboardingWizardInner({
                   onBack={
                     // On the connect step Back unwinds the sign-in first, and
                     // only means "the previous step" once nothing is running.
-                    step === 4 && connectPhase !== "idle"
+                    step === 5 && hostConfigurationSaved ? undefined : step === 4 && !hostClaudeSource && connectPhase !== "idle"
                       ? unwindConnectStep
                       : canGoBackFromOnboardingStep({ currentStep: step, entryStep })
                         ? () => setStep(backStepFrom(step))
@@ -3090,7 +3244,7 @@ function OnboardingWizardInner({
                     step === 1
                       ? "Continue"
                       : step === 5
-                        ? "Get started"
+                        ? hostConfigurationSaved ? "Open Agent" : "Get started"
                         : step === 4
                           ? connectCta.label
                           : "Next"

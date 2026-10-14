@@ -250,7 +250,9 @@ import { ApiError } from "../api/client";
 import { queryKeys } from "../lib/queryKeys";
 import { ADAPTER_AUTH_MISSING_CHECK_CODE, getEnvironmentCapabilities } from "@paperclipai/shared";
 import { CLAUDE_OAUTH_TOKEN_ENV_KEY } from "./environment-variables-editor/model";
-import { ONBOARDING_STORAGE_KEY, OnboardingWizard } from "./OnboardingWizard";
+import { ONBOARDING_STORAGE_KEY, OnboardingWizard as Wizard } from "./OnboardingWizard";
+import { TooltipProvider } from "./ui/tooltip";
+const OnboardingWizard = () => <TooltipProvider><Wizard /></TooltipProvider>;
 import { CONNECTED_HOLD_MS } from "./onboarding/onboarding-motion";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

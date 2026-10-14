@@ -30,6 +30,36 @@ conditions. No model test or managed hello is needed. A local pass does not prov
 native authentication or model availability. Permission and environment repairs
 continue through the existing lifecycle, without a separate recovery wizard.
 
+## First company and legacy onboarding
+
+The first-company Agent step, company onboarding route and default wizard
+variant share the same onboarding controller. Claude Code defaults to Paperclip.
+Choose Server Claude Code configuration before connecting a provider to save
+without a managed connection, stored-login lookup or blocking model test.
+Switching sources keeps unfinished authentication inputs, env edits and the same
+model value. Host offers static suggestions, aliases and manual IDs. Native
+default leaves the model unset. Env drafts stay in memory rather than browser
+storage.
+
+Check local conditions is an optional, separate action. A failed local check,
+missing permission or permission-query error does not block Save Agent. It does
+not prove authentication or model availability. Saving keeps the normal server
+field, company/actor, approval and supported-target checks. Existing onboarding
+approval handling remains in place; a failed approval request retains the saved
+Agent and its approval state.
+
+The completion screen separates the saved record from pending, failed or passing
+local verification. Open Agent ends this configuration step and opens that same
+Agent. It does not create or dispatch the old onboarding task. Continue the
+existing lifecycle verification there after repairing permission or the local
+environment. Reloading a saved wizard also reuses the record. Back and existing
+route/leave rules do not submit a source draft. The Paperclip source retains its
+existing login, full test and first-task flow.
+
+Active model testing is a separate feature and is never a prerequisite for this
+save. This wizard does not infer a connection or hello success from saving or
+local verification.
+
 ## Editing an existing Agent
 
 In the Claude Code settings, Configuration source edits a draft. Save explicitly
@@ -156,8 +186,9 @@ do not deactivate an already ready Agent or delete a new Agent's record.
 
 Local checks are the slice of issue #24 implemented in #27; existing-Agent
 source editing and login boundaries are implemented in #28. The independent
-New Agent flow is implemented in #29. Isolated host
+New Agent flow is implemented in #29, and the first-company and legacy onboarding
+controller in #30. Isolated host
 model testing is implemented separately; until available, explicit `model-test`
-returns `unsupported` without inference. Formal host task execution, creation
-onboarding controllers, billing, and integrated release qualification remain separate work.
+returns `unsupported` without inference. Formal host task execution, billing,
+and integrated release qualification remain separate work.
 This slice adds no Telemetry events, Observability spans, or run-log rows.
