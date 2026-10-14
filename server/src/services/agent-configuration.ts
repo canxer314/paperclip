@@ -133,7 +133,7 @@ export async function completeAgentConfiguration(txDb: Db, existing: AgentConfig
   if (shouldRecordRevision && beforeConfig) {
     const afterConfig = buildConfigSnapshot(normalizedUpdated);
     const changedKeys = diffConfigSnapshot(beforeConfig, afterConfig);
-    if (changedKeys.length > 0) {
+    if (changedKeys.length > 0 || options?.recordRevision?.source === "rollback") {
       await txDb.insert(agentConfigRevisions).values({
         companyId: normalizedUpdated.companyId,
         agentId: normalizedUpdated.id,

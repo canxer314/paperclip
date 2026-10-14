@@ -111,6 +111,37 @@ Paperclip. The host administrator manages native authentication under the actual
 execution user. Switching back validates the retained managed/router binding
 under the existing Paperclip rules; it does not fall back to host on failure.
 
+## Rolling back a configuration
+
+Use the existing configuration revision history to restore a selected revision.
+`POST /api/agents/:id/config-revisions/:revisionId/rollback` restores its entire
+`afterConfig`, including source, the shared model, runtime settings, budget and
+profile fields present in that snapshot. It creates a `rollback` revision linked
+to the selected revision, including when that configuration is already current.
+Older snapshots without a source field continue to mean Paperclip; snapshots
+without appearance fields retain the current appearance.
+
+Current company access, configuration permissions, approval freezes, Agent host
+field restrictions and supported-target checks still apply. A legal host rollback
+can be saved without company host permission or a working CLI/cwd. It restores
+no host permission, native credentials, native settings snapshot, or old check
+success. Checks and new runs must meet their current admission requirements.
+
+Inactive managed/router references remain in host configuration. Restoring a
+different reference checks its current company, caller and installation access
+without resolving credentials or checking provider health. Returning to Paperclip
+uses current managed connection admission; an unavailable binding fails closed
+without falling back to host. Rollback does not launch a model test or restore an
+old connection grant. Active env secret references keep their existing checks.
+`latest` resolves at runtime, including rotations after rollback. Any revision
+containing a redacted marker remains non-restorable.
+
+Stop and wait for runs to finish before rollback. Rollback does not stop running
+tasks, clear queued work, restore a historical session or add a session protection
+mechanism. Existing model, cwd, bundle fingerprint and fresh-session behavior
+continues. Running processes and queued work do not switch atomically, and an old
+run can still write session state through the existing completion path.
+
 ## Local check API
 
 The existing `POST /api/companies/:companyId/adapters/claude_local/test-environment`
@@ -187,7 +218,8 @@ do not deactivate an already ready Agent or delete a new Agent's record.
 Local checks are the slice of issue #24 implemented in #27; existing-Agent
 source editing and login boundaries are implemented in #28. The independent
 New Agent flow is implemented in #29, and the first-company and legacy onboarding
-controller in #30. Isolated host
+controller in #30. Whole-configuration rollback compatibility is implemented in
+#31. Isolated host
 model testing is implemented separately; until available, explicit `model-test`
 returns `unsupported` without inference. Formal host task execution, billing,
 and integrated release qualification remain separate work.

@@ -247,11 +247,17 @@ export function configPatchFromSnapshot(snapshot: unknown): Partial<typeof agent
   if (!runtimeConfig.success) {
     throw unprocessable("Invalid revision snapshot: runtimeConfig");
   }
+  const appearance = agentAppearanceSchema.nullable().optional().safeParse(snapshot.appearance);
+  if (!appearance.success) {
+    throw unprocessable("Invalid revision snapshot: appearance");
+  }
 
   return {
     name: snapshot.name,
     role: snapshot.role,
     title: typeof snapshot.title === "string" || snapshot.title === null ? snapshot.title : null,
+    ...(Object.hasOwn(snapshot, "icon") ? { icon: typeof snapshot.icon === "string" ? snapshot.icon : null } : {}),
+    ...(appearance.data !== undefined ? { appearance: appearance.data } : {}),
     reportsTo:
       typeof snapshot.reportsTo === "string" || snapshot.reportsTo === null ? snapshot.reportsTo : null,
     capabilities:

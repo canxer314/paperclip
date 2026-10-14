@@ -2126,6 +2126,21 @@ Companies may configure an optional shared API connection and model for short ac
 
 ## Claude host permission administration
 
+The existing configuration rollback API restores the selected revision's entire
+`afterConfig`, including Claude source and shared model, and records a linked
+`rollback` revision even when there are no changed keys. Historical source
+omission means Paperclip; absent legacy appearance fields retain current values.
+Current actor/company authorization, approval freezes, Agent host field limits
+and supported-target checks remain. Host permission and environment availability
+do not gate legal configuration restoration. Changed inactive host bindings
+retain current reference-access checks without provider probing; returning to an
+active managed binding uses current connection admission and fails closed.
+Rollback restores no host permission, native authentication/configuration bytes
+or check success. Runtime `latest` secret resolution, redacted-marker refusal,
+existing session resets/fingerprints, and the operator's stop-and-wait responsibility
+remain. No automatic task stop, queue clearing or session protection is added.
+See [configuration rollback](claude-local-checks.md#rolling-back-a-configuration).
+
 First-company Agent setup and legacy onboarding use the shared source control
 and static host model catalog. Legal host configuration can be saved before
 permission or local verification succeeds, without querying/applying a stored
