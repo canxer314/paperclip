@@ -251,6 +251,7 @@ import {
 
 import { reserveRunBudget } from "./budget-reservations.js";
 import { accountRunCost, createCostAccountingReconciler } from "./run-cost-accounting.js";
+import { HOST_EXTERNAL_UNTRACKED_COST_POLICY, resolveClaudeConfigurationSource } from "@paperclipai/shared";
 
 import { toolActionDeliveryService } from "./tool-action-delivery.js";
 import { liveVoiceExecutionGuidance } from "./voice/voice-execution-guidance.js";
@@ -2590,6 +2591,15 @@ export function heartbeatService(
         context.executionPolicy = retainedTrust.executionPolicy;
       }
       let config = parseObject(agent.adapterConfig);
+      // Select once before reservation/dispatch. Recovery retains the original
+      // policy, including the legacy policy of runs without a marker.
+      if (!runOptions.nativeLeaseOwner && !runOptions.nativeRestartRecovery
+        && agent.adapterType === "claude_local" && resolveClaudeConfigurationSource(config) === "host") {
+        await db.update(heartbeatRuns).set({
+          usageJson: sql`coalesce(${heartbeatRuns.usageJson}, '{}'::jsonb) || ${JSON.stringify({ costPolicy: HOST_EXTERNAL_UNTRACKED_COST_POLICY })}::jsonb`,
+        }).where(and(eq(heartbeatRuns.id, run.id), eq(heartbeatRuns.companyId, run.companyId),
+          sql`${heartbeatRuns.usageJson}->>'costPolicy' is null`, isNull(heartbeatRuns.costAccountedAt)));
+      }
       const taskSession = taskKey
         ? await getTaskSession(
             agent.companyId,

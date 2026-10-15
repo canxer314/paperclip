@@ -357,6 +357,13 @@ Full hierarchy: **Initiative** (company goal) → Projects → Milestones → Is
 
 Token/LLM cost budgeting is a core part of Paperclip. External revenue and expense tracking is a future plugin.
 
+Claude runs explicitly prepared with the server configuration source retain a
+per-run zero-charge policy for Paperclip accounting. Captured tokens remain
+visible. External actual cost is unknown; zero internal charges do not imply
+free or subscription-included usage, and amount budgets do not cap the external
+bill. Historical runs keep their saved policy. Formal host task dispatch and
+release qualification are separate from this accounting slice.
+
 ### Cost Reporting
 
 Fully-instrumented Agents report token/API usage back to Paperclip. Costs are tracked at every level:

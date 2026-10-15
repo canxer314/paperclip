@@ -1,6 +1,6 @@
 import { type ClassValue, clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
-import { deriveAgentUrlKey, deriveProjectUrlKey, normalizeProjectUrlKey, hasNonAsciiContent } from "@paperclipai/shared";
+import { HOST_EXTERNAL_UNTRACKED_COST_POLICY, deriveAgentUrlKey, deriveProjectUrlKey, normalizeProjectUrlKey, hasNonAsciiContent } from "@paperclipai/shared";
 import type { BillingType, FinanceDirection, FinanceEventKind } from "@paperclipai/shared";
 
 export function cn(...inputs: ClassValue[]) {
@@ -217,6 +217,7 @@ export function visibleRunCostUsd(
   usage: Record<string, unknown> | null,
   result: Record<string, unknown> | null = null,
 ): number {
+  if (usage?.costPolicy === HOST_EXTERNAL_UNTRACKED_COST_POLICY) return 0;
   const billingType = coerceBillingType(usage?.billingType) ?? coerceBillingType(result?.billingType);
   if (billingType === "subscription_included") return 0;
   return readRunCostUsd(usage) ?? readRunCostUsd(result) ?? 0;

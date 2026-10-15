@@ -359,6 +359,14 @@ Private projects are absent from list and search results for non-members, and di
 - `external_run_id` text null
 - `context_snapshot` jsonb null
 
+Claude runs explicitly prepared with `configurationSource: host` persist
+`host_external_untracked_v1` in `usage_json.costPolicy` before reservation and
+dispatch. Normal accounting uses zero internal charges and retains captured
+tokens and CLI reference amounts. The internal zero is an operator policy;
+external actual cost remains unknown. Source changes and configuration
+rollback do not reinterpret earlier runs. Missing markers retain the existing
+policy. This accounting slice does not enable host task spawning.
+
 ## 7.9 `cost_events`
 
 - `id` uuid pk

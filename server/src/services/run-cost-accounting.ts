@@ -1,4 +1,4 @@
-import { usdToUnits, unitsToCents } from "@paperclipai/shared";
+import { HOST_EXTERNAL_UNTRACKED_COST_POLICY, usdToUnits, unitsToCents } from "@paperclipai/shared";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { accountingRuntimeBaselines, budgetReservations, agentRuntimeState, agents, costEvents, heartbeatRuns, nativeRunFinalizations, issues, projects, type Db } from "@paperclipai/db";
 import { withAccountingTransaction } from "./accounting-transaction.js";
@@ -71,6 +71,7 @@ export async function accountRunCost(db: Db, runId: string, hooks: BudgetService
       .where(and(eq(budgetReservations.companyId, run.companyId), eq(budgetReservations.runId, run.id), eq(budgetReservations.state, "held")));
     if (preProviderFailure) return true;
     const usage = object(run.usageJson);
+    const hostExternalUntracked = usage.costPolicy === HOST_EXTERNAL_UNTRACKED_COST_POLICY;
     const scope = object(usage.ledgerScope);
     // Deleted attribution targets become unallocated; a deletion must never
     // prevent recording provider spend. Foreign-company references still fail.
@@ -82,8 +83,8 @@ export async function accountRunCost(db: Db, runId: string, hooks: BudgetService
       }
     }
     const costUsd = amount(usage.cacheAdjustedCostUsd) ?? text(usage.costUsdExact) ?? amount(usage.costUsd);
-    const billingType = text(usage.billingType) ?? "unknown";
-    const costUnits = billingType === "subscription_included" ? 0n : usdToUnits(costUsd ?? 0);
+    const billingType = hostExternalUntracked ? "unknown" : text(usage.billingType) ?? "unknown";
+    const costUnits = hostExternalUntracked || billingType === "subscription_included" ? 0n : usdToUnits(costUsd ?? 0);
     const costCents = unitsToCents(costUnits);
     const [agent] = await tx.select({ adapterType: agents.adapterType }).from(agents).where(eq(agents.id, run.agentId));
     const hasBillableEvidence = agent?.adapterType !== "process" || costUsd !== null || usage.costStatus === "unpriced"
@@ -95,16 +96,19 @@ export async function accountRunCost(db: Db, runId: string, hooks: BudgetService
       issueId: text(scope.issueId), projectId: text(scope.projectId), billingCode: text(scope.billingCode),
       provider: text(usage.provider) ?? "unknown", biller: text(usage.biller) ?? text(usage.provider) ?? "unknown",
       providerRequestId: text(usage.providerRequestId),
-      pricingProvenance: object(usage.pricingProvenance),
+      pricingProvenance: hostExternalUntracked
+        ? { source: "operator", version: HOST_EXTERNAL_UNTRACKED_COST_POLICY, evidence: "Paperclip internal zero-charge policy. External actual cost unknown." }
+        : object(usage.pricingProvenance),
       model: text(usage.model) ?? "unknown", billingType,
-      costStatus: (costUsd === null || usage.costStatus === "unpriced") && billingType !== "subscription_included" && hasBillableEvidence ? "unpriced" : usage.costStatus === "estimated" ? "estimated" : "reported",
+      costStatus: hostExternalUntracked ? "reported" : (costUsd === null || usage.costStatus === "unpriced") && billingType !== "subscription_included" && hasBillableEvidence ? "unpriced" : usage.costStatus === "estimated" ? "estimated" : "reported",
       inputTokens: amount(usage.inputTokens) ?? 0, cachedInputTokens: amount(usage.cachedInputTokens) ?? 0, outputTokens: amount(usage.outputTokens) ?? 0,
       costCents, occurredAt: run.finishedAt ?? run.createdAt,
     };
     const parts = Array.isArray(usage.usageByModel) ? usage.usageByModel.map(object) : [];
     const tokensMatch = ["inputTokens", "cachedInputTokens", "outputTokens"].every((key) =>
       parts.reduce((sum, part) => sum + (amount(object(part.usage)[key]) ?? 0), 0) === (amount(usage[key]) ?? 0));
-    const costMatches = costUsd !== null && parts.reduce((sum, part) => sum + usdToUnits(amount(part.costUsd) ?? 0), 0n) === usdToUnits(costUsd);
+    const costMatches = hostExternalUntracked || (costUsd !== null
+      && parts.reduce((sum, part) => sum + usdToUnits(amount(part.costUsd) ?? 0), 0n) === usdToUnits(costUsd));
     const validParts = parts.length > 0 && tokensMatch && costMatches
       && parts.every((part) => text(part.model) && amount(part.costUsd) !== null)
       && new Set(parts.map((part) => part.model)).size === parts.length;
@@ -113,8 +117,8 @@ export async function accountRunCost(db: Db, runId: string, hooks: BudgetService
       for (const [index, part] of parts.entries()) {
         const partUsage = object(part.usage);
         const remainder = costUnits - allocated;
-        const reported = usdToUnits(amount(part.costUsd) ?? 0);
-        const partUnits = billingType === "subscription_included" ? 0n : index === parts.length - 1 ? remainder : reported < remainder ? reported : remainder;
+        const reported = hostExternalUntracked ? 0n : usdToUnits(amount(part.costUsd) ?? 0);
+        const partUnits = hostExternalUntracked || billingType === "subscription_included" ? 0n : index === parts.length - 1 ? remainder : reported < remainder ? reported : remainder;
         allocated += partUnits;
         const partCents = unitsToCents(partUnits);
         await createCostEventInTransaction(tx, run.companyId, {

@@ -3,7 +3,8 @@ title: Costs and Budgets
 summary: Budget caps, cost tracking, and auto-pause enforcement
 ---
 
-Paperclip tracks every token spent by every agent and enforces budget limits to prevent runaway costs.
+Paperclip tracks captured token usage and internal charges. Its budget limits
+apply to the amounts it records.
 
 ## How Cost Tracking Works
 
@@ -16,6 +17,21 @@ Each agent heartbeat reports cost events with:
 - **Cost in cents** — the dollar cost of the invocation
 
 These are aggregated per agent per month (UTC calendar month).
+
+### Server Claude Code configuration
+
+Runs explicitly prepared with the server configuration source retain a saved
+zero-charge policy. Paperclip records zero internal charges, including model
+amount breakdowns, while keeping captured tokens. Run details show any CLI
+amount as a reference and state that the external actual cost is unknown.
+Zero does not mean free or included in a subscription. Paperclip amount budgets
+do not cap the external bill. Set an external limit at the actual billing
+provider when one is required.
+
+Changing or rolling back the Agent's source does not change an earlier run's
+policy. Historical runs without a policy marker keep their existing charges.
+The accounting slice does not enable host task dispatch. The complete host
+execution feature remains subject to its integration and release checks.
 
 ## Setting Budgets
 

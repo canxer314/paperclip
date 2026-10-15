@@ -142,6 +142,30 @@ mechanism. Existing model, cwd, bundle fingerprint and fresh-session behavior
 continues. Running processes and queued work do not switch atomically, and an old
 run can still write session state through the existing completion path.
 
+## Formal run cost policy
+
+A Claude run explicitly prepared with the host source records
+`host_external_untracked_v1` in its persisted `usageJson.costPolicy` before
+budget reservation and dispatch. Normal accounting records zero Paperclip
+charges, including each valid model breakdown, and retains captured tokens.
+The CLI's original amount remains a reference in controlled run details.
+The ledger identifies the zero amount as an operator policy, not a provider
+report of free usage or included subscription usage.
+
+Run details in both UI layouts show the internal zero amount and explain that
+external actual cost is unknown. Zero does not mean free or subscription
+included. Paperclip amount budgets do not cap the external bill; configure any
+external limit at the actual billing provider.
+
+Accounting reads the saved run policy. Switching or rolling back an Agent's
+source does not reinterpret earlier runs. Runs without the marker retain
+their existing accounting policy, and price tables stay unchanged. Receipt
+completeness and pending accounting remain required before settlement.
+
+This accounting slice is verified with isolated run fixtures. It does not
+enable formal host spawning; dispatch integration and the remaining zero
+reservation/recovery journeys are separate parts of #24.
+
 ## Copying and company packages
 
 Duplicate Agent keeps the saved Claude configuration source and shared model.
