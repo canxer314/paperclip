@@ -334,3 +334,13 @@ execution admission are delivered by the remaining issues under #24. No provider
 request or credential read is part of granting permission. No new Telemetry events
 or OTLP spans are added; unconfigured Observability remains no-op and the run log
 remains in the instance database.
+
+### Claude configuration source in copies and company packages
+
+Agent copies and company packages preserve the saved Claude configuration source.
+A missing source retains Paperclip behavior. Copies use current company permission;
+packages transfer neither host permission nor native credentials. Imports confirm
+the target execution host and runtime user once per batch. Confirmation grants no
+permission, and missing permission does not block saving. Existing automatic host
+verification stays local-only. Existing explicit env secret and optional pause
+rules continue. See [copying and company packages](claude-local-checks.md#copying-and-company-packages).

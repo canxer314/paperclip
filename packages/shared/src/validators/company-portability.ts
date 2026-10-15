@@ -332,6 +332,7 @@ export const companyPortabilityImportSchema = companyPortabilityPreviewSchema.ex
   adapterOverrides: z.record(z.string().min(1), portabilityAdapterOverrideSchema).optional(),
   secretValues: z.record(z.string().min(1), z.string()).optional(),
   pauseAutomations: z.boolean().optional(),
+  hostConfigurationConfirmed: z.boolean().optional(),
 });
 
 export type CompanyPortabilityImport = z.infer<typeof companyPortabilityImportSchema>;

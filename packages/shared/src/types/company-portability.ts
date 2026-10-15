@@ -395,6 +395,8 @@ export interface CompanyPortabilityImportRequest extends CompanyPortabilityPrevi
   adapterOverrides?: Record<string, CompanyPortabilityAdapterOverride>;
   secretValues?: Record<string, string>;
   pauseAutomations?: boolean;
+  /** One batch acknowledgement of the target host/runtime user; grants no permission. */
+  hostConfigurationConfirmed?: boolean;
 }
 
 export interface CompanyPortabilityImportResult {

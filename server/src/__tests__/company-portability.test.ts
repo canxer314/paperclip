@@ -558,6 +558,80 @@ describe("company portability", () => {
     });
   });
 
+  function claudePackage(configurationSource: unknown = "host") {
+    return {
+      "COMPANY.md": '---\nname: "Claude package"\n---\n',
+      "agents/claude/AGENTS.md": '---\nname: "Claude"\n---\nInstructions.\n',
+      ".paperclip.yaml": renderYamlBlock({
+        schema: "paperclip/v1",
+        agents: { claude: { adapter: { type: "claude_local", config: {
+          ...(configurationSource === undefined ? {} : { configurationSource }), model: "custom-model",
+        } } } },
+      }, 0).join("\n"),
+    };
+  }
+
+  it("requires one target environment confirmation before writing a host package", async () => {
+    const portability = companyPortabilityService({} as any);
+    await expect(portability.importBundle({
+      source: { type: "inline", files: claudePackage() },
+      target: { mode: "new_company" },
+    }, "user-1")).rejects.toMatchObject({
+      status: 422, details: { code: "claude_host_import_confirmation_required" },
+    });
+    expect(companySvc.create).not.toHaveBeenCalled();
+    expect(agentSvc.create).not.toHaveBeenCalled();
+    expect(secretSvc.create).not.toHaveBeenCalled();
+  });
+
+  it.each([null, "invalid", 1])("rejects invalid imported Claude source %s before writing", async source => {
+    await expect(companyPortabilityService({} as any).importBundle({
+      source: { type: "inline", files: claudePackage(source) },
+      target: { mode: "new_company" }, hostConfigurationConfirmed: true,
+    }, "user-1")).rejects.toThrow();
+    expect(companySvc.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects an unsupported host engine before creating the target company", async () => {
+    const files = claudePackage();
+    files[".paperclip.yaml"] = renderYamlBlock({ schema: "paperclip/v1", agents: { claude: {
+      adapter: { type: "claude_local", config: { configurationSource: "host", engine: "acp" } },
+    } } }, 0).join("\n");
+    await expect(companyPortabilityService({} as any).importBundle({
+      source: { type: "inline", files }, target: { mode: "new_company" }, hostConfigurationConfirmed: true,
+    }, "user-1")).rejects.toMatchObject({ status: 422, details: { code: "claude_host_target_unsupported" } });
+    expect(companySvc.create).not.toHaveBeenCalled();
+  });
+
+  it("does not require host confirmation for skipped agents", async () => {
+    agentSvc.list.mockResolvedValue([{ id: "existing", name: "Claude" }]);
+    const result = await companyPortabilityService({} as any).importBundle({
+      source: { type: "inline", files: claudePackage() },
+      target: { mode: "existing_company", companyId: "company-1" },
+      include: { company: false, agents: true, skills: false, projects: false, issues: false }, collisionStrategy: "skip",
+    }, "user-1");
+    expect(result.agents).toMatchObject([{ action: "skipped", id: "existing" }]);
+    expect(agentSvc.create).not.toHaveBeenCalled();
+    expect(agentSvc.update).not.toHaveBeenCalled();
+  });
+
+  it("requires confirmation for an effective host override of a legacy package", async () => {
+    const portability = companyPortabilityService({} as any);
+    await expect(portability.importBundle({
+      source: { type: "inline", files: claudePackage("paperclip") }, target: { mode: "new_company" },
+      adapterOverrides: { claude: { adapterType: "claude_local", adapterConfig: { configurationSource: "host" } } },
+    }, "user-1")).rejects.toMatchObject({ status: 422, details: { code: "claude_host_import_confirmation_required" } });
+    expect(companySvc.create).not.toHaveBeenCalled();
+  });
+
+  it("retains a package host source when a same-adapter config override omits source", async () => {
+    await expect(companyPortabilityService({} as any).importBundle({
+      source: { type: "inline", files: claudePackage() }, target: { mode: "new_company" },
+      adapterOverrides: { claude: { adapterType: "claude_local", adapterConfig: { model: "edited-model" } } },
+    }, "user-1")).rejects.toMatchObject({ status: 422, details: { code: "claude_host_import_confirmation_required" } });
+    expect(companySvc.create).not.toHaveBeenCalled();
+  });
+
   it("exports referenced skills as stubs by default with sanitized Paperclip extension data", async () => {
     const portability = companyPortabilityService({} as any);
 

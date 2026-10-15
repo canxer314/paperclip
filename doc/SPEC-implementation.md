@@ -2203,3 +2203,13 @@ existing isolation. Restoring onto a new host requires revoke/regrant; host chan
 are not detected. Existing adapter sources remain unchanged. This administration
 slice does not implement host-source execution; see #24 and the permission notes
 in [PRODUCT.md](PRODUCT.md#claude-server-configuration-permission).
+
+### Claude configuration source in copies and company packages
+
+Agent copies and company packages preserve the saved Claude configuration source.
+A missing source retains Paperclip behavior. Copies use current company permission;
+packages transfer neither host permission nor native credentials. Imports confirm
+the target execution host and runtime user once per batch. Confirmation grants no
+permission, and missing permission does not block saving. Existing automatic host
+verification stays local-only. Existing explicit env secret and optional pause
+rules continue. See [copying and company packages](claude-local-checks.md#copying-and-company-packages).
