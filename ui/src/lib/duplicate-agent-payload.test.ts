@@ -52,6 +52,14 @@ describe("duplicate agent payload", () => {
     expect(buildDuplicateAgentPayload(source)).not.toHaveProperty("appearance");
   });
 
+  it.each(["host", "paperclip", undefined])("preserves Claude source %s without a copied host permission", source => {
+    const payload = buildDuplicateAgentPayload({ ...baseAgent, adapterType: "claude_local",
+      adapterConfig: { ...(source === undefined ? {} : { configurationSource: source }), model: "custom-model" } });
+    expect(payload.adapterConfig).toEqual({ ...(source === undefined ? {} : { configurationSource: source }), model: "custom-model" });
+    expect(payload).not.toHaveProperty("hostConfigurationConfirmed");
+    expect(payload.permissions).toEqual({ canCreateAgents: true, canCreateSkills: true });
+  });
+
   it("suffixes duplicate names", () => {
     expect(duplicateAgentName("Senior Product Engineer")).toBe("Senior Product Engineer Copy");
     expect(duplicateAgentName("   ")).toBe("Agent Copy");

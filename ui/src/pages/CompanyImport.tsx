@@ -8,6 +8,7 @@ import type {
   CompanyPortabilitySource,
   CompanyPortabilityAdapterOverride,
 } from "@paperclipai/shared";
+import { CLAUDE_HOST_IMPORT_NOTICE, resolveClaudeConfigurationSource } from "@paperclipai/shared";
 import { useCompany } from "../context/CompanyContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useToastActions } from "../context/ToastContext";
@@ -571,6 +572,11 @@ function importAdapterValues(choice: string, sourceConfig?: Record<string, unkno
   return {
     ...defaultCreateValues,
     adapterType: choice === "openai_dot" ? "paperclip_runner" : choice,
+    ...(choice === "claude_local" ? {
+      model: typeof sourceConfig?.model === "string" ? sourceConfig.model : "",
+      claudeEngine: sourceConfig?.engine === "acp" ? "acp" : sourceConfig?.engine === "cli" ? "cli" : "auto",
+      adapterSchemaValues: { configurationSource: resolveClaudeConfigurationSource(sourceConfig ?? {}) },
+    } : {}),
     ...(choice === "openai_dot" ? {
       adapterSchemaValues: {
         provider: "openai_dot",
@@ -592,6 +598,7 @@ interface AdapterPickerItem {
   /** Display choice, including the separate Dot provider. */
   adapterChoice: string;
   adapterConfig: Record<string, unknown>;
+  path: string;
   /**
    * Set when the manifest adapter is not installed on the destination: the
    * adapter type the agent falls back to unless the user picks another one.
@@ -658,6 +665,9 @@ function AdapterPickerList({
                     value={selectedType}
                     onChange={(e) => onChangeAdapter(agent.slug, e.target.value)}
                   >
+                    {!adapterOptions.some(option => option.value === selectedType) && (
+                      <option value={selectedType}>{adapterLabels[selectedType] ?? getAdapterLabel(selectedType)}</option>
+                    )}
                     {adapterOptions.map((opt) => (
                       <option key={opt.value} value={opt.value}>
                         {opt.label}
@@ -920,6 +930,7 @@ export function CompanyImport() {
 
   // Post-import success / activation state
   const [pauseAutomations, setPauseAutomations] = useState(true);
+  const [hostConfigurationConfirmed, setHostConfigurationConfirmed] = useState(false);
   const [importOutcome, setImportOutcome] = useState<
     | {
         kind: "full";
@@ -1246,8 +1257,10 @@ export function CompanyImport() {
       if (variables.resume) {
         return watchImportJob(variables.resume.jobId, variables.resume.storageKey);
       }
+      if (requiresHostConfirmation && !hostConfigurationConfirmed) throw new Error(CLAUDE_HOST_IMPORT_NOTICE);
       const meta = {
         ...buildImportMetaCommon(),
+        ...(requiresHostConfirmation ? { hostConfigurationConfirmed } : {}),
         nameOverrides: buildFinalNameOverrides(),
         selectedFiles: buildSelectedFiles(),
         adapterOverrides: buildFinalAdapterOverrides(),
@@ -1392,6 +1405,7 @@ export function CompanyImport() {
 
   function resetImportFlowState() {
     previewGenerationRef.current += 1;
+    setHostConfigurationConfirmed(false);
     setImportPreview(null);
     resetMutationState();
   }
@@ -1640,7 +1654,8 @@ export function CompanyImport() {
           (!availableAdapterTypes || availableAdapterTypes.has(ceoAdapterType))
             ? ceoAdapterType
             : firstEnabledLegacyAdapter ?? FALLBACK_IMPORT_ADAPTER_TYPE;
-      } else if (availableAdapterTypes && !availableAdapterTypes.has(a.adapterType)) {
+      } else if (availableAdapterTypes && !availableAdapterTypes.has(a.adapterType)
+        && !(a.adapterType === "claude_local" && a.adapterConfig?.configurationSource === "host")) {
         // The fallback must itself be installed: the CEO's adapter when it is,
         // else any installed adapter, else null so the manifest adapter stands
         // and the server's unknown-adapter rejection is the backstop.
@@ -1658,6 +1673,7 @@ export function CompanyImport() {
         adapterType: a.adapterType,
         adapterChoice,
         adapterConfig: a.adapterConfig ?? {},
+        path: a.path,
         fallbackAdapterType,
       };
     });
@@ -1685,11 +1701,22 @@ export function CompanyImport() {
           throw new Error("OpenAI Dot requires acknowledgement of external billing. Configure the Dot adapter and enable Allow externally billed provider.");
         }
         override.adapterConfig = getUIAdapter(apiType).buildAdapterConfig(configVals);
+        if (apiType === "claude_local") {
+          override.adapterConfig.configurationSource = resolveClaudeConfigurationSource(configVals.adapterSchemaValues ?? {});
+        }
       }
       overrides[agent.slug] = override;
     }
     return Object.keys(overrides).length > 0 ? overrides : undefined;
   }
+
+  const requiresHostConfirmation = adapterAgents.some(agent =>
+    checkedFiles.has(agent.path)
+    && importPreview!.plan.agentPlans.some(plan => plan.slug === agent.slug && plan.action !== "skip")
+    && !skippedSlugs.has(agent.slug)
+    && effectiveAdapterType(agent) === "claude_local"
+    && (adapterConfigValues[agent.slug]?.adapterSchemaValues ?? agent.adapterConfig)?.configurationSource === "host",
+  );
 
   const hasSource =
     sourceMode === "local" ? !!localPackage : importUrl.trim().length > 0;
@@ -2134,6 +2161,15 @@ export function CompanyImport() {
             onChangeConfig={handleAdapterConfigChange}
           />
 
+          {requiresHostConfirmation && (
+            <label className="mx-5 mt-3 flex items-start gap-2 text-xs text-muted-foreground">
+              <input type="checkbox" aria-label="Confirm target Claude execution environment"
+                checked={hostConfigurationConfirmed} disabled={importMutation.isPending}
+                onChange={event => setHostConfigurationConfirmed(event.target.checked)} className="accent-foreground" />
+              <span>{CLAUDE_HOST_IMPORT_NOTICE}</span>
+            </label>
+          )}
+
           {/* Import button — below renames */}
           <div className="mx-5 mt-3 flex flex-wrap items-center justify-end gap-3">
             <label className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -2151,7 +2187,7 @@ export function CompanyImport() {
             <Button
               size="sm"
               onClick={() => importMutation.mutate({ previewForImport: importPreview, pauseAutomations })}
-              disabled={importMutation.isPending || hasErrors || selectedCount === 0}
+              disabled={importMutation.isPending || hasErrors || selectedCount === 0 || (requiresHostConfirmation && !hostConfigurationConfirmed)}
             >
               <Download className="mr-1.5 h-3.5 w-3.5" />
               {importMutation.isPending

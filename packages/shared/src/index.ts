@@ -2876,6 +2876,7 @@ export type { ClaudeHostAccessState, ClaudeHostAccessCompany } from "./types/acc
 export { setClaudeHostAccessSchema, type SetClaudeHostAccess } from "./validators/access.js";
 export {
   CLAUDE_CONFIGURATION_SOURCES,
+  CLAUDE_HOST_IMPORT_NOTICE,
   claudeConfigurationSourceSchema,
   resolveClaudeConfigurationSource,
   adapterEnvironmentTestPurposeSchema,

@@ -109,9 +109,11 @@ vi.mock("../context/CompanyContext", () => ({
 
 vi.mock("../context/ToastContext", () => ({
   useToastActions: () => ({ pushToast: mockPushToast }),
+  useOptionalToastActions: () => ({ pushToast: mockPushToast }),
 }));
 
 vi.mock("@/components/ui/tooltip", () => ({
+  TooltipProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
   Tooltip: ({ children }: { children: ReactNode }) => <>{children}</>,
   TooltipContent: ({ children }: { children: ReactNode }) => <span>{children}</span>,
   TooltipTrigger: ({ children }: { children: ReactNode }) => <>{children}</>,
@@ -1073,6 +1075,62 @@ describe("CompanyImport", () => {
     expect(call).toBeTruthy();
     return call![0] as { adapterOverrides?: Record<string, { adapterType: string; adapterConfig?: Record<string, unknown> }> };
   }
+
+  it("confirms the target host once for a batch and preserves host source after editing", async () => {
+    const preview = buildMixedAdapterPreviewResult();
+    for (const agent of preview.manifest.agents) {
+      agent.adapterType = "claude_local";
+      agent.adapterConfig = { configurationSource: "host", model: "custom-model" };
+    }
+    mockCompaniesApi.importPreview.mockResolvedValue(preview);
+    await renderPage();
+    await enterGithubUrl();
+    await clickButton(text => text === "Preview import");
+    expect(findButton(text => text.startsWith("Import 3 file"))?.disabled).toBe(true);
+    const confirmation = () => container.querySelectorAll<HTMLInputElement>('input[aria-label="Confirm target Claude execution environment"]');
+    expect(confirmation()).toHaveLength(1);
+    expect(container.textContent).toContain("runtime user");
+    expect(container.textContent).toContain("Native credentials and host permission are not transferred");
+    await clickButton(text => text === "configure adapter");
+    expect(container.textContent).toContain("custom-model");
+    await act(async () => { container.querySelector<HTMLButtonElement>('[aria-label="Enable Chrome"]')!.click(); });
+    await act(async () => { confirmation()[0]!.click(); });
+    await clickButton(text => text.startsWith("Import 3 file"));
+    await settle();
+    expect(mockCompaniesApi.importBundleAsync.mock.calls.at(-1)?.[0]).toMatchObject({ hostConfigurationConfirmed: true });
+    expect(lastImportMeta().adapterOverrides?.coder?.adapterConfig).toMatchObject({
+      configurationSource: "host", model: "custom-model", chrome: true,
+    });
+    expect(mockAgentsApi.resume).not.toHaveBeenCalled();
+  });
+
+  it("requires no target acknowledgement when the collision plan skips every host agent", async () => {
+    const preview = buildPreviewResult();
+    preview.manifest.agents[0]!.adapterConfig = { configurationSource: "host" };
+    preview.plan.agentPlans[0]!.action = "skip";
+    mockCompaniesApi.importPreview.mockResolvedValue(preview);
+    await renderPage();
+    await enterGithubUrl();
+    await clickButton(text => text === "Preview import");
+    expect(container.querySelector('[aria-label="Confirm target Claude execution environment"]')).toBeNull();
+    expect(findButton(text => text.startsWith("Import 3 file"))?.disabled).toBe(false);
+    await clickButton(text => text.startsWith("Import 3 file"));
+    await settle();
+    expect(mockCompaniesApi.importBundleAsync.mock.calls.at(-1)?.[0]).not.toHaveProperty("hostConfigurationConfirmed");
+  });
+
+  it("keeps the saved host adapter when the destination adapter list lacks Claude", async () => {
+    const preview = buildPreviewResult();
+    preview.manifest.agents[0]!.adapterConfig = { configurationSource: "host" };
+    mockCompaniesApi.importPreview.mockResolvedValue(preview);
+    mockAdaptersApi.list.mockResolvedValue([{ type: "codex_local", disabled: false }]);
+    await renderPage();
+    await enterGithubUrl();
+    await clickButton(text => text === "Preview import");
+    expect(findAdapterSelects().map(select => select.value)).toEqual(["claude_local"]);
+    expect(container.textContent).not.toContain("will use Codex");
+    expect(container.querySelector('[aria-label="Confirm target Claude execution environment"]')).toBeTruthy();
+  });
 
   it("keeps manifest adapters and sends no overrides when the user touches nothing", async () => {
     await previewMixedAdapterPackage();
