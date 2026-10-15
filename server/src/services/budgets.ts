@@ -1,4 +1,4 @@
-import { compareCents, normalizeCents } from "@paperclipai/shared";
+import { centsToUnits, compareCents, normalizeCents } from "@paperclipai/shared";
 import { and, desc, eq, gte, inArray, lt, ne, sql, or, isNull, type SQL } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 
@@ -7,6 +7,7 @@ import {
   approvals,
   budgetIncidents,
   budgetPolicies,
+  budgetReservations,
   companies,
   costEvents,
   heartbeatRuns,
@@ -28,7 +29,7 @@ import type {
 } from "@paperclipai/shared";
 import { HttpError, notFound, unprocessable } from "../errors.js";
 import { logger } from "../middleware/logger.js";
-import { withAccountingTransaction } from "./accounting-transaction.js";
+import { withAccountingReadSnapshot, withAccountingTransaction } from "./accounting-transaction.js";
 import { logActivity, type LogActivityInput, type ActivityPublication } from "./activity-log.js";
 
 type ScopeRecord = {
@@ -1005,6 +1006,35 @@ export function budgetService(db: Db, hooks: BudgetServiceHooks = {}) {
   }
   return {
     ...reads,
+    // A diagnostic call must read current blockers without reconciling or resuming scopes.
+    getModelTestBlock: (companyId: string, agentId: string) => withAccountingReadSnapshot(db, companyId, async tx => {
+      const [company] = await tx.select().from(companies).where(eq(companies.id, companyId));
+      const [agent] = await tx.select().from(agents).where(and(eq(agents.id, agentId), eq(agents.companyId, companyId)));
+      if (!agent) throw notFound("Agent not found");
+      if (company.status === "archived" || ["pending_approval", "terminated"].includes(agent.status)
+        || ["pending_approval", "terminating", "cleaning_up", "terminated", "rejected"].includes(agent.lifecycleState)) {
+        return "The current lifecycle does not allow a model test.";
+      }
+      if (company.pauseReason === "budget" || agent.pauseReason === "budget" || agent.lifecycleHolds.includes("budget")) {
+        return "A budget pause blocks this model test. Resolve the budget pause first.";
+      }
+      const policies = await tx.select().from(budgetPolicies).where(and(
+        eq(budgetPolicies.companyId, companyId), eq(budgetPolicies.isActive, true), eq(budgetPolicies.hardStopEnabled, true),
+        sql`${budgetPolicies.amount} > 0`, budgetPoliciesForRun(companyId, agentId, null),
+      ));
+      const spends = await computeObservedSpends(tx, policies);
+      for (const [index, policy] of policies.entries()) {
+        const observed = spends[index];
+        if (observedBlocks(policy, observed) || observed.pendingRunCount > 0) return "An applicable budget or incomplete accounting blocks this model test.";
+        const [held] = await tx.select({ amount: sql<string>`coalesce(sum(${budgetReservations.amountCents}), 0)::text` })
+          .from(budgetReservations).where(and(eq(budgetReservations.companyId, companyId), eq(budgetReservations.state, "held"),
+            policy.scopeType === "agent" ? eq(budgetReservations.agentId, agentId) : undefined));
+        if (centsToUnits(observed.totalExact) + centsToUnits(held.amount) >= centsToUnits(policy.amount)) {
+          return "Available budget is reserved by unfinished runs.";
+        }
+      }
+      return null;
+    }),
     deliverPendingEnforcement: (companyId?: string) => deliverBudgetEnforcement(db, hooks, companyId),
     reconcilePolicies: async () => {
       const scopes = await db.selectDistinct({ companyId: budgetPolicies.companyId, scopeType: budgetPolicies.scopeType, scopeId: budgetPolicies.scopeId })

@@ -3120,22 +3120,12 @@ export function agentRoutes(
     async (req, res) => {
       const companyId = req.params.companyId as string;
       const type = assertKnownAdapterType(req.params.type as string);
-      await assertCanCreateAgentsForCompany(req, companyId);
+      const modelTest = req.body.purpose === "model-test";
+      if (modelTest) assertCompanyAccess(req, companyId);
+      else await assertCanCreateAgentsForCompany(req, companyId);
 
       const adapter = requireServerAdapter(type);
 
-      const source = resolveClaudeConfigurationSource(req.body.adapterConfig);
-      assertClaudeConfigurationTarget(type, req.body.adapterConfig);
-      const hostSource = type === "claude_local" && source === "host";
-      const localCheck = hostSource || (type === "claude_local" && req.body.purpose === "local-check");
-      if (req.body.purpose === "local-check" && type !== "claude_local") {
-        throw unprocessable("Local startup checks are only supported by the Claude Code adapter.");
-      }
-      if (hostSource) await assertClaudeHostAccess(db, companyId);
-      const requestedBinding = !localCheck && req.body.aiConnection ? aiRuntimeConnectionBindingSchema.parse(req.body.aiConnection) : undefined;
-      const aiBinding = requestedBinding?.mode === "router" ? undefined : requestedBinding;
-      if (aiBinding && req.body.testCredentials && Object.keys(req.body.testCredentials).length) throw unprocessable("A managed connection test cannot override its credentials");
-      const inputAdapterConfig = aiBinding ? { ...req.body.adapterConfig, env: stripAiAuthBindings(req.body.adapterConfig?.env) } : (req.body?.adapterConfig ?? {}) as Record<string, unknown>;
       const savedAgentId = typeof req.body.agentId === "string" ? req.body.agentId : null;
       const savedAgent = savedAgentId
         ? await getAccessibleResource(req, res, svc.getById(savedAgentId), "Agent not found")
@@ -3145,7 +3135,35 @@ export function agentRoutes(
         if (savedAgent.companyId !== companyId) throw notFound("Agent not found");
         await assertCanUpdateAgent(req, savedAgent);
       }
-      const poolBinding = requestedBinding ?? (!localCheck && savedAgent?.runtimeConfig?.aiConnection ? aiRuntimeConnectionBindingSchema.parse(savedAgent.runtimeConfig.aiConnection) : undefined);
+      if (modelTest && (!savedAgent || type !== "claude_local" || savedAgent.adapterType !== type)) {
+        throw unprocessable("An isolated model test requires an existing Claude Code Agent.");
+      }
+      if (modelTest && (Object.keys(req.body.adapterConfig).length || req.body.aiConnection || req.body.testCredentials || req.body.environmentId !== undefined)) {
+        throw unprocessable("This model test only accepts the Agent's saved configuration. Save execution changes first.");
+      }
+      const requestedConfig = modelTest ? savedAgent!.adapterConfig : req.body.adapterConfig;
+      const source = resolveClaudeConfigurationSource(requestedConfig);
+      assertClaudeConfigurationTarget(type, requestedConfig);
+      const hostSource = type === "claude_local" && source === "host";
+      const localCheck = !modelTest && (hostSource || (type === "claude_local" && req.body.purpose === "local-check"));
+      if (req.body.purpose === "local-check" && type !== "claude_local") {
+        throw unprocessable("Local startup checks are only supported by the Claude Code adapter.");
+      }
+      if (hostSource) await assertClaudeHostAccess(db, companyId);
+      const requestedBinding = !localCheck && !modelTest && req.body.aiConnection ? aiRuntimeConnectionBindingSchema.parse(req.body.aiConnection) : undefined;
+      const aiBinding = requestedBinding?.mode === "router" ? undefined : requestedBinding;
+      if (aiBinding && req.body.testCredentials && Object.keys(req.body.testCredentials).length) throw unprocessable("A managed connection test cannot override its credentials");
+      const inputAdapterConfig = aiBinding ? { ...requestedConfig, env: stripAiAuthBindings(requestedConfig?.env) } : (requestedConfig ?? {}) as Record<string, unknown>;
+      if (modelTest && !hostSource) {
+        res.json({ adapterType: type, purpose: "model-test", outcome: "unsupported", status: "warn", modelResponse: "not_tested",
+          checks: [{ code: "claude_model_test_unsupported_source", level: "warn", message: "Isolated saved-configuration model tests currently require Claude server configuration. No model request was sent." }], testedAt: new Date().toISOString() });
+        return;
+      }
+      if (modelTest) {
+        const block = await budgets.getModelTestBlock(companyId, savedAgent!.id);
+        if (block) throw conflict(block, { code: "claude_model_test_blocked" });
+      }
+      const poolBinding = requestedBinding ?? (!localCheck && !modelTest && savedAgent?.runtimeConfig?.aiConnection ? aiRuntimeConnectionBindingSchema.parse(savedAgent.runtimeConfig.aiConnection) : undefined);
       if (poolBinding?.mode === "router") {
         await validateManagedAgentBinding(req, companyId, savedAgentId ?? "", type, req.body.adapterConfig ?? {}, poolBinding, req.body.environmentId, false, !savedAgentId);
         res.json({ adapterType: type, status: "warn", testedAt: new Date().toISOString(), checks: [{ code: "ai_connection_pool_task_test_required", level: "warn", message: "Pool configuration is available. Run a task to verify the selected account and harness; this preview does not allocate a task or contact a provider." }] });
@@ -3229,7 +3247,7 @@ export function agentRoutes(
         res.json({ adapterType: type, status: checks.some(c => c.level === "error") ? "fail" : checks.some(c => c.level === "warn") ? "warn" : "pass", testedAt: new Date().toISOString(), checks });
         return;
       }
-      const normalizedAdapterConfig = await secretsSvc.normalizeAdapterConfigForPersistence(
+      const normalizedAdapterConfig = modelTest ? adapterConfigForTest : await secretsSvc.normalizeAdapterConfigForPersistence(
         companyId,
         adapterConfigForTest,
         { strictMode: strictSecretsMode, adapterType: type },
@@ -3243,11 +3261,11 @@ export function agentRoutes(
         normalizedAdapterConfig,
         buildActorSecretContext(
           req,
-          requestedEnvironmentId
+          modelTest ? { consumerType: "agent", consumerId: savedAgent!.id } : requestedEnvironmentId
             ? { consumerType: "environment", consumerId: requestedEnvironmentId }
             : { consumerType: "system", consumerId: "adapter_test" },
         ),
-        { adapterType: type, userSecretMediation: "owner_scoped" },
+        { adapterType: type, userSecretMediation: modelTest ? "declared" : "owner_scoped" },
       );
 
       const { executionTarget, environmentName, fallbackChecks, sandboxIdentityCheck, release } =
@@ -3339,7 +3357,7 @@ export function agentRoutes(
 
         // Probe-only credentials bypass storage, not authorization. The schema
         // allows only provider key names; they never enter persisted config.
-        if (localCheck && environmentEnvChecks.some(c => c.level === "error")) {
+        if ((localCheck || modelTest) && environmentEnvChecks.some(c => c.level === "error")) {
           releaseStatus = "failed";
           res.json({ adapterType: type, status: "fail", purpose: req.body.purpose ?? "local-check", outcome: "failed",
             localPrerequisites: "failed", configurationReproducibility: "unverifiable", modelResponse: "not_tested",
@@ -3358,12 +3376,16 @@ export function agentRoutes(
           }
         }
         if (hostSource) await assertClaudeHostAccess(db, companyId);
+        if (modelTest) {
+          const block = await budgets.getModelTestBlock(companyId, savedAgent!.id);
+          if (block) throw conflict(block, { code: "claude_model_test_blocked" });
+        }
         const result = aiBinding ? await withManagedAiProbe(db, { companyId, agentId: req.body.agentId ?? "", responsibleUserId: responsibleUserForAiRequest(req), adapterType: type, binding: aiBinding, config: effectiveAdapterConfig, allowUninstalledPersonal: !req.body.agentId, allowUninstalledShared: !req.body.agentId && await canInstallSharedAiConnectionForNewAgent(db, req, companyId, aiBinding) }, async managed => {
           const tested = await testManagedEnvironment(type, { companyId, adapterType: type, config: managed.config, executionTarget, environmentName }, aiBinding, managed, savedAgentId ?? undefined);
           tested.checks.unshift({ code: "ai_connection_tested", level: "info", message: `Tested ${managed.accountName} — ${managed.accountOwnerUserId ? managed.accountOwnerUserId === responsibleUserForAiRequest(req) ? "your personal account" : "the owner’s account authorized for this agent" : "company-shared account"}. Responsible user: ${req.actor.type === "agent" ? responsibleUserForAiRequest(req) ?? "unavailable" : "the signed-in user"}.` });
           return tested;
         }) : await adapter.testEnvironment({ companyId, adapterType: type, config: effectiveAdapterConfig, executionTarget, environmentName,
-          ...(localCheck ? { purpose: req.body.purpose ?? "local-check" } : {}) });
+          ...(localCheck || modelTest ? { purpose: req.body.purpose ?? "local-check" } : {}) });
 
         const prefixChecks = [
           ...(sandboxIdentityCheck ? [sandboxIdentityCheck] : []),

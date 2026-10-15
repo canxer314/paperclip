@@ -127,7 +127,7 @@ describe("Claude local startup checks", () => {
     const result = await testEnvironment({ companyId: "company-1", adapterType: "claude_local", purpose: "model-test",
       config: { configurationSource: "host" } });
     expect(result).toMatchObject({ purpose: "model-test", outcome: "unsupported", modelResponse: "not_tested" });
-    expect(runtime.process).not.toHaveBeenCalled();
+    expect(runtime.process.mock.calls.every(call => ["--version", "--help"].includes(String((call[3] as string[])[0])))).toBe(true);
   });
 
   it("retains required CLI version gates for explicitly selected models", async () => {

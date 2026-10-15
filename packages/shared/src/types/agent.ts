@@ -337,6 +337,8 @@ export interface AdapterEnvironmentTestResult {
   localPrerequisites?: "passed" | "failed" | "unverifiable";
   configurationReproducibility?: "verified" | "unverifiable";
   modelResponse?: "passed" | "failed" | "not_tested";
+  /** Saved selection used for this call; empty means native default, not backend identity. */
+  selectedModel?: string;
   cwd?: string;
 }
 

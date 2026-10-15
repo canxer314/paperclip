@@ -669,6 +669,77 @@ async function flushUntil(check: () => boolean, timeoutMs = 4000) {
 }
 
 describe("AgentConfigForm environment selector", () => {
+  it("explicitly tests only saved host configuration without saving or requesting a draft", async () => {
+    mockAgentsApi.testEnvironment.mockResolvedValueOnce({ adapterType: "claude_local", purpose: "model-test", outcome: "passed",
+      modelResponse: "passed", status: "pass", checks: [], testedAt: new Date(0).toISOString(), cwd: "/fixture/work" });
+    const result = await renderForm([], { adapterType: "claude_local", adapterConfig: { configurationSource: "host", model: "saved-model" } });
+    roots.push(result.root);
+    expect(result.container.textContent).toContain("native project context");
+    await clickByText(result.container, "Test saved model");
+    await flushUntil(() => mockAgentsApi.testEnvironment.mock.calls.length > 0);
+    expect(mockAgentsApi.testEnvironment).toHaveBeenCalledWith("company-1", "claude_local", { agentId: "agent-1", purpose: "model-test" });
+    expect(result.onSave).not.toHaveBeenCalled();
+    expect(result.container.textContent).toContain("saved-model call succeeded for this test");
+    expect(result.container.textContent).toContain("/fixture/work");
+  });
+
+  it("disables saved model tests for execution drafts and discards a late result even after changing back", async () => {
+    let complete!: (value: unknown) => void;
+    mockAgentsApi.testEnvironment.mockReturnValueOnce(new Promise(resolve => { complete = resolve; }));
+    const result = await renderForm([], { adapterType: "claude_local", adapterConfig: { configurationSource: "host", model: "saved-model" } });
+    roots.push(result.root);
+    await clickByText(result.container, "Test saved model");
+    expect(findButton(result.container, "Testing saved model…")?.disabled).toBe(true);
+    await clickByText(result.container, "Testing saved model…");
+    expect(mockAgentsApi.testEnvironment).toHaveBeenCalledTimes(1);
+    await selectClaudeSource(result.container, "paperclip");
+    expect(result.container.textContent).toContain("Save or discard execution changes");
+    await selectClaudeSource(result.container, "host");
+    await act(async () => { complete({ adapterType: "claude_local", purpose: "model-test", outcome: "passed", modelResponse: "passed",
+      status: "pass", checks: [], testedAt: new Date(0).toISOString() }); });
+    await flushReact();
+    expect(result.container.textContent).not.toContain("call succeeded");
+    expect(result.onSave).not.toHaveBeenCalled();
+  });
+
+  it("disables the saved test for pending env input without flushing or saving it", async () => {
+    const result = await renderForm([], { adapterType: "claude_local", adapterConfig: { configurationSource: "host" } });
+    roots.push(result.root);
+    await clickByText(result.container, "Add variable");
+    await act(async () => {
+      setInputValue(result.container.querySelector<HTMLInputElement>('input[aria-label="Variable name"]')!, "ANTHROPIC_MODEL");
+      setInputValue(result.container.querySelector<HTMLInputElement>('input[aria-label="Variable value"]')!, "draft-model");
+    });
+    expect(findButton(result.container, "Test saved model")?.disabled).toBe(true);
+    expect(mockAgentsApi.testEnvironment).not.toHaveBeenCalled();
+    expect(result.onSave).not.toHaveBeenCalled();
+  });
+
+  it.each(["completed", "pending"])("blocks and invalidates %s model results when the execution environment becomes a draft", async state => {
+    const response = { adapterType: "claude_local", purpose: "model-test", outcome: "passed", modelResponse: "passed", status: "pass", checks: [], testedAt: new Date(0).toISOString() };
+    let complete!: (value: unknown) => void;
+    if (state === "completed") mockAgentsApi.testEnvironment.mockResolvedValueOnce(response);
+    else mockAgentsApi.testEnvironment.mockReturnValueOnce(new Promise(resolve => { complete = resolve; }));
+    const result = await renderForm([makeEnvironment({ id: "local-1", name: "Local", driver: "local" }),
+      makeEnvironment({ id: "sandbox-1", name: "Sandbox", driver: "sandbox", config: { provider: "daytona" } })],
+      { adapterType: "claude_local", adapterConfig: { configurationSource: "host" }, defaultEnvironmentId: "local-1" });
+    roots.push(result.root);
+    await clickByText(result.container, "Test saved model");
+    if (state === "completed") await flushUntil(() => result.container.textContent?.includes("call succeeded") === true);
+    const select = result.container.querySelector<HTMLSelectElement>('[data-config-section="environment"] select');
+    expect(select).not.toBeNull();
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!.call(select, "sandbox-1");
+      select!.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await flushReact();
+    expect(select!.value).toBe("sandbox-1");
+    if (state === "pending") { await act(async () => { complete(response); }); await flushReact(); }
+    expect(findButton(result.container, "Test saved model")?.disabled).toBe(true);
+    expect(result.container.textContent).not.toContain("call succeeded");
+    expect(result.container.textContent).toContain("Save or discard execution changes");
+    expect(result.onSave).not.toHaveBeenCalled();
+  });
   let roots: Root[] = [];
 
   it("switches Claude source only in the draft and saves the shared model and unrelated configuration", async () => {

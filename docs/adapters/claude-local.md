@@ -69,9 +69,20 @@ change separately before using Paperclip login. Login completion and applying a
 stored login cannot silently submit a host draft. Native authentication is
 managed by the administrator under the actual execution user.
 
-Existing-Agent editing and local checks are available as parts of #24. Formal
-host task execution, creation controllers and complete release qualification
-are implemented separately.
+Existing-Agent editing, local checks and saved model tests are available as parts
+of #24. Formal host task execution and complete release qualification are
+implemented separately.
+
+Existing host-source Agents can explicitly test their saved model. The test
+requires configuration access, current company host permission and applicable
+budgets. Save or discard execution drafts first. Manual pauses stay paused;
+budget pauses and accounting blockers still prevent tests. One isolated CLI
+call disables all model tools and session persistence. Native project context,
+hooks, helpers, external records, retry and fallback can remain active and can
+incur external charges. Results are limited to the current page and call. No
+formal run, cost event or reservation is created. See
+[saved model tests](/doc/claude-local-checks.md#testing-the-saved-model) for the API,
+unsupported configurations, timeout and result limits.
 
 ## Paperclip default model
 
